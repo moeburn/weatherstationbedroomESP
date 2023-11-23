@@ -20,10 +20,10 @@
 #define NUM_LEDS 3
 CRGB leds[NUM_LEDS];
 AsyncWebServer server(80);
-Average<float> pm1Avg(6);
-Average<float> pm25Avg(6);
-Average<float> pm10Avg(6);
-Average<float> wifiAvg(6);
+Average<float> pm1Avg(30);
+Average<float> pm25Avg(30);
+Average<float> pm10Avg(30);
+Average<float> wifiAvg(30);
 
 Adafruit_SHT31 sht31 = Adafruit_SHT31();
 
@@ -466,7 +466,7 @@ bool saveState(Bsec2 bsec)
         terminal.print(String(bsecState[i], HEX));
     }
     terminal.println();
-    terminal.flush();``
+    terminal.flush();
     EEPROM.write(0, BSEC_MAX_STATE_BLOB_SIZE);
     EEPROM.commit();
 #endif
@@ -595,7 +595,7 @@ void loop() {
     }
   if (WiFi.status() == WL_CONNECTED) {Blynk.run();} 
 
-  if  (millis() - millisAvg >= 5000)  //if it's been 1 second
+  if  (millis() - millisAvg >= 1000)  //if it's been 1 second
     {
         wifiAvg.push(WiFi.RSSI());
         readPMS();
