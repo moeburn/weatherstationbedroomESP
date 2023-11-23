@@ -5,7 +5,7 @@
 #include <AsyncElegantOTA.h>
 #include <BlynkSimpleEsp32.h>
 #include "time.h"
-#include <PMserial.h> // Arduino library for PM sensors with serial interface
+//#include <PMserial.h> // Arduino library for PM sensors with serial interface
 #include <FastLED.h>
 #include "Adafruit_SHT31.h"
 #include <Average.h>
@@ -16,6 +16,10 @@
 #include <bsec2.h>
 #include "config/bme680_iaq_33v_3s_28d/bsec_iaq.h"
 
+#include "Plantower_PMS7003.h"
+char output[256];
+Plantower_PMS7003 pms7003 = Plantower_PMS7003();
+
 #define LED_PIN 15  //d2
 #define NUM_LEDS 3
 CRGB leds[NUM_LEDS];
@@ -23,11 +27,14 @@ AsyncWebServer server(80);
 Average<float> pm1Avg(30);
 Average<float> pm25Avg(30);
 Average<float> pm10Avg(30);
+Average<float> pm1aAvg(30);
+Average<float> pm25aAvg(30);
+Average<float> pm10aAvg(30);
 Average<float> wifiAvg(30);
 
 Adafruit_SHT31 sht31 = Adafruit_SHT31();
 
-SerialPM pms(PMSx003, Serial); // PMSx003, UART
+//SerialPM pms(PMSx003, Serial); // PMSx003, UART
 
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -18000;  //Replace with your GMT offset (secs)
@@ -42,6 +49,8 @@ const char* ssid = "mikesnet";
 const char* password = "springchicken";
 
 float old1p0, old2p5, old10, new1p0, new2p5, new10;
+float old1p0a, old2p5a, old10a, new1p0a, new2p5a, new10a;
+unsigned int up3, up5, up10, up25, up50, up100;
 float abshumBME, tempBME, presBME, humBME, gasBME, dewpoint, humidex, tempSHT, humSHT, abshumSHT, dewpointSHT, humidexSHT;
 float bmeiaq, bmeiaqAccuracy, bmestaticIaq, bmeco2Equivalent, bmebreathVocEquivalent, bmestabStatus, bmerunInStatus, bmegasPercentage;
 int firstvalue = 1;
@@ -204,7 +213,7 @@ BLYNK_WRITE(V14)
     if (String("temps") == param.asStr()) {
         tempSHT = sht31.readTemperature();
         humSHT = sht31.readHumidity();
-        terminal.print("tempBME[v0],tempPool[v5],humidex[v17],dewpoint[v2]: ");
+        terminal.print("tempBME[v0],tempPool[v5],humidex[v31],dewpoint[v2]: ");
         terminal.print(tempBME);
         terminal.print(",,,");
         terminal.print(humidex);
@@ -226,33 +235,36 @@ BLYNK_WRITE(V14)
         terminal.println(gasBME);
     }
     if (String("particles") == param.asStr()) {
-      terminal.print(F("PM1.0 "));
-      terminal.print(pms.pm01);
-      terminal.print(F(", "));
-      terminal.print(F("PM2.5 "));
-      terminal.print(pms.pm25);
-      terminal.print(F(", "));
-      terminal.print(F("PM10 "));
-      terminal.print(pms.pm10);
-      terminal.println(F(" [ug/m3]"));
-      terminal.print(F("N0.3 "));
-      terminal.print(pms.n0p3);
-      terminal.print(F(", "));
-      terminal.print(F("N0.5 "));
-      terminal.print(pms.n0p5);
-      terminal.print(F(", "));
-      terminal.print(F("N1.0 "));
-      terminal.print(pms.n1p0);
-      terminal.print(F(", "));
-      terminal.print(F("N2.5 "));
-      terminal.print(pms.n2p5);
-      terminal.print(F(", "));
-      terminal.print(F("N5.0 "));
-      terminal.print(pms.n5p0);
-      terminal.print(F(", "));
-      terminal.print(F("N10 "));
-      terminal.print(pms.n10p0);
-      terminal.println(F(" [#/100cc]"));
+
+
+        sprintf(output, "\nSensor Version: %d    Error Code: %d\n",
+                      pms7003.getHWVersion(),
+                      pms7003.getErrorCode());
+        Serial.print(output);
+
+        sprintf(output, "    PM1.0 (ug/m3): %2d     [atmos: %d]\n",
+                      pms7003.getPM_1_0(),
+                      pms7003.getPM_1_0_atmos());              
+        Serial.print(output);
+        sprintf(output, "    PM2.5 (ug/m3): %2d     [atmos: %d]\n",
+                      pms7003.getPM_2_5(),
+                      pms7003.getPM_2_5_atmos());
+        Serial.print(output);
+        sprintf(output, "    PM10  (ug/m3): %2d     [atmos: %d]\n",
+                      pms7003.getPM_10_0(),
+                      pms7003.getPM_10_0_atmos());              
+        Serial.print(output);
+
+        sprintf(output, "\n    RAW: %2d[>0.3] %2d[>0.5] %2d[>1.0] %2d[>2.5] %2d[>5.0] %2d[>10]\n",
+                      pms7003.getRawGreaterThan_0_3(),
+                      pms7003.getRawGreaterThan_0_5(),
+                      pms7003.getRawGreaterThan_1_0(),
+                      pms7003.getRawGreaterThan_2_5(),
+                      pms7003.getRawGreaterThan_5_0(),
+                      pms7003.getRawGreaterThan_10_0());
+        Serial.print(output);
+      
+
     }
     if (String("bsec") == param.asStr()) {
         terminal.print("bmeiaq[v23],bmeiaqAccuracy[v24],bmestaticIaq[v25],bmeco2Equivalent[v26],bmebreathVocEquivalent[v27],bmestabStatus[v28],bmerunInStatus[v29],bmegasPercentage[v30]:");
@@ -289,29 +301,6 @@ BLYNK_WRITE(V14)
     }
     terminal.flush();
 
-}
-
-void readPMS(void){
-    pms.read();
-        new1p0 = pms.pm01;
-        new2p5 = pms.pm25;
-        new10 = pms.pm10;
-                if (firstvalue == 0)  //do not do this on the first run
-        {
-            if (new1p0 > 200) {new1p0 = old1p0;} //check for data spikes in particle counter, ignore data that is >200
-            if (new2p5 > 200) {new2p5 = old2p5;} //data spikes ruin pretty graph
-            if (new10 > 200) {new10 = old10;}
-            if (new1p0 - old1p0 > 50) {new1p0 = old1p0;} //also ignore data that is >50 off from last data
-            if (new2p5 - old2p5 > 50) {new2p5 = old2p5;}
-            if (new10 - old10 > 50) {new10 = old10;}
-        }
-        pm1Avg.push(new1p0);
-        pm25Avg.push(new2p5);
-        pm10Avg.push(new10);
-        old1p0 = new1p0; //reset data spike check variable
-        old2p5 = new2p5;
-        old10 = new10;
-        firstvalue = 0;
 }
 
 void errLeds(void)
@@ -473,18 +462,66 @@ bool saveState(Bsec2 bsec)
     return true;
 }
 
+void readPMS() {
+    if (pms7003.hasNewData()) {
+        new1p0 = pms7003.getPM_1_0();
+        new2p5 = pms7003.getPM_2_5();
+        new10 = pms7003.getPM_10_0();
+                if (firstvalue == 0)  //do not do this on the first run
+        {
+            if (new1p0 > 200) {new1p0 = old1p0;} //check for data spikes in particle counter, ignore data that is >200
+            if (new2p5 > 200) {new2p5 = old2p5;} //data spikes ruin pretty graph
+            if (new10 > 200) {new10 = old10;}
+            if (new1p0 - old1p0 > 50) {new1p0 = old1p0;} //also ignore data that is >50 off from last data
+            if (new2p5 - old2p5 > 50) {new2p5 = old2p5;}
+            if (new10 - old10 > 50) {new10 = old10;}
+        }
+        pm1Avg.push(new1p0);
+        pm25Avg.push(new2p5);
+        pm10Avg.push(new10);
+        old1p0 = new1p0; //reset data spike check variable
+        old2p5 = new2p5;
+        old10 = new10;
 
+        new1p0a = pms7003.getPM_1_0_atmos(); 
+        new2p5a = pms7003.getPM_2_5_atmos();
+        new10a = pms7003.getPM_10_0_atmos();
+                if (firstvalue == 0)  //do not do this on the first run
+        {
+            if (new1p0a > 200) {new1p0a = old1p0a;} //check for data spikes in particle counter, ignore data that is >200
+            if (new2p5a > 200) {new2p5a = old2p5a;} //data spikes ruin pretty graph
+            if (new10a > 200) {new10a = old10a;}
+            if (new1p0a - old1p0a > 50) {new1p0a = old1p0a;} //also ignore data that is >50 off from last data
+            if (new2p5a - old2p5a > 50) {new2p5a = old2p5a;}
+            if (new10a - old10a > 50) {new10a = old10a;}
+        }
+        pm1aAvg.push(new1p0a);
+        pm25aAvg.push(new2p5a);
+        pm10aAvg.push(new10a);
+        old1p0a = new1p0a; //reset data spike check variable
+        old2p5a = new2p5a;
+        old10a = new10a;        
+       up3 = pms7003.getRawGreaterThan_0_3();
+       up5 = pms7003.getRawGreaterThan_0_5();
+       up10 = pms7003.getRawGreaterThan_1_0();
+       up25 = pms7003.getRawGreaterThan_2_5();
+       up50 = pms7003.getRawGreaterThan_5_0();
+       up100 = pms7003.getRawGreaterThan_10_0();
+    firstvalue = 0;
+  }
+}
 
 
 void setup() {
   setCpuFrequencyMhz(80);
   Serial.begin(9600);
+  Serial1.begin(9600, SERIAL_8N1, 3, 1);
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   Serial.println("");
   sht31.begin(0x44);
-  pms.init();
+  pms7003.init(&Serial1);
   // Wait for connection
   while (WiFi.status() != WL_CONNECTED) {
     leds[0] = CRGB(100, 100, 0);
@@ -593,12 +630,13 @@ void loop() {
       if (!envSensor.run()) {
         checkBsecStatus (envSensor);
     }
+    pms7003.updateFrame();
+    readPMS();
   if (WiFi.status() == WL_CONNECTED) {Blynk.run();} 
 
   if  (millis() - millisAvg >= 1000)  //if it's been 1 second
     {
         wifiAvg.push(WiFi.RSSI());
-        readPMS();
         millisAvg = millis();
     }
 
@@ -606,7 +644,6 @@ void loop() {
     {
         tempSHT = sht31.readTemperature();
         humSHT = sht31.readHumidity();
-        readPMS();
         millisBlynk = millis();
         abshumBME = (6.112 * pow(2.71828, ((17.67 * tempBME)/(tempBME + 243.5))) * humBME * 2.1674)/(273.15 + tempBME);
         abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
@@ -636,13 +673,15 @@ void loop() {
         bridge2.virtualWrite(V74, abshumSHT);
         bridge2.virtualWrite(V75, bmeiaq);
         Blynk.virtualWrite(V7, pm10Avg.mean());
-        Blynk.virtualWrite(V8, pms.n0p3);
-        Blynk.virtualWrite(V9, pms.n0p5);
-        Blynk.virtualWrite(V10, pms.n1p0);
-        Blynk.virtualWrite(V11, pms.n2p5);
-        Blynk.virtualWrite(V12, pms.n5p0);
-        Blynk.virtualWrite(V13, pms.n10p0);
-
+        Blynk.virtualWrite(V8, up3);
+        Blynk.virtualWrite(V9, up5);
+        Blynk.virtualWrite(V10, up10);
+        Blynk.virtualWrite(V11, up25);
+        Blynk.virtualWrite(V12, up50);
+        Blynk.virtualWrite(V13, up100);
+        Blynk.virtualWrite(V17, pm1aAvg.mean());
+        Blynk.virtualWrite(V18, pm25aAvg.mean());
+        Blynk.virtualWrite(V19, pm10aAvg.mean());
         Blynk.virtualWrite(V23, bmeiaq);
         Blynk.virtualWrite(V24, bmeiaqAccuracy);
         Blynk.virtualWrite(V25, bmestaticIaq);
