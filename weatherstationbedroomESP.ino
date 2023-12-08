@@ -6,7 +6,7 @@
 #include <BlynkSimpleEsp32.h>
 #include "time.h"
 //#include <PMserial.h> // Arduino library for PM sensors with serial interface
-#include <FastLED.h>
+//#include <FastLED.h>
 #include "Adafruit_SHT31.h"
 #include <Average.h>
 #if defined(ARDUINO_ARCH_ESP32) || (ARDUINO_ARCH_ESP8266)
@@ -20,9 +20,9 @@
 char output[256];
 Plantower_PMS7003 pms7003 = Plantower_PMS7003();
 
-#define LED_PIN 15  //d2
-#define NUM_LEDS 3
-CRGB leds[NUM_LEDS];
+//#define LED_PIN 15  //d2
+//#define NUM_LEDS 3
+//CRGB leds[NUM_LEDS];
 AsyncWebServer server(80);
 Average<float> pm1Avg(30);
 Average<float> pm25Avg(30);
@@ -75,7 +75,7 @@ WidgetBridge bridge2(V60);
 
 #define STATE_SAVE_PERIOD UINT32_C(720 * 60 * 1000) /* 360 minutes - 4 times a day */
 #define PANIC_LED 2
-#define ERROR_DUR 1000
+#define ERROR_DUR 250
 
 
 
@@ -196,6 +196,8 @@ BLYNK_WRITE(V14)
     terminal.println("rapidon");
     terminal.println("rapidoff");
     terminal.println("heater");
+    terminal.println("erase");
+    
      terminal.println("==End of list.==");
     }
         if (String("wifi") == param.asStr()) 
@@ -240,20 +242,20 @@ BLYNK_WRITE(V14)
         sprintf(output, "\nSensor Version: %d    Error Code: %d\n",
                       pms7003.getHWVersion(),
                       pms7003.getErrorCode());
-        Serial.print(output);
+        terminal.print(output);
 
         sprintf(output, "    PM1.0 (ug/m3): %2d     [atmos: %d]\n",
                       pms7003.getPM_1_0(),
                       pms7003.getPM_1_0_atmos());              
-        Serial.print(output);
+        terminal.print(output);
         sprintf(output, "    PM2.5 (ug/m3): %2d     [atmos: %d]\n",
                       pms7003.getPM_2_5(),
                       pms7003.getPM_2_5_atmos());
-        Serial.print(output);
+        terminal.print(output);
         sprintf(output, "    PM10  (ug/m3): %2d     [atmos: %d]\n",
                       pms7003.getPM_10_0(),
                       pms7003.getPM_10_0_atmos());              
-        Serial.print(output);
+        terminal.print(output);
 
         sprintf(output, "\n    RAW: %2d[>0.3] %2d[>0.5] %2d[>1.0] %2d[>2.5] %2d[>5.0] %2d[>10]\n",
                       pms7003.getRawGreaterThan_0_3(),
@@ -262,7 +264,7 @@ BLYNK_WRITE(V14)
                       pms7003.getRawGreaterThan_2_5(),
                       pms7003.getRawGreaterThan_5_0(),
                       pms7003.getRawGreaterThan_10_0());
-        Serial.print(output);
+        terminal.print(output);
       
 
     }
@@ -299,8 +301,16 @@ BLYNK_WRITE(V14)
       terminal.print("> Heater is now: ");
       terminal.print(heater);
     }
-    terminal.flush();
+    if (String("erase") == param.asStr()) {
+      terminal.println("Erasing EEPROM");
 
+      for (uint8_t i = 0; i <= BSEC_MAX_STATE_BLOB_SIZE; i++)
+      EEPROM.write(i, 0);
+
+      EEPROM.commit();
+      terminal.flush();
+      terminal.flush();
+    }
 }
 
 void errLeds(void)
@@ -514,9 +524,27 @@ void readPMS() {
 
 void setup() {
   setCpuFrequencyMhz(80);
+  pinMode(4, INPUT_PULLUP);
+  pinMode(0, INPUT_PULLUP);
+  pinMode(2, INPUT_PULLUP);
+  pinMode(5, INPUT_PULLUP);  //5, 15, 16, 17, 18 in use, disable rest
+  pinMode(14, INPUT_PULLUP);
+  pinMode(13, INPUT_PULLUP);
+  pinMode(12, INPUT_PULLUP);
+  for(int i=15; i<=19; i++) {
+    pinMode(i, INPUT_PULLUP);
+  }
+  pinMode(23, INPUT_PULLUP);
+  pinMode(25, INPUT_PULLUP);
+  pinMode(26, INPUT_PULLUP);
+  pinMode(27, INPUT_PULLUP);
+  for(int i=32; i<=36; i++) {
+    pinMode(i, INPUT_PULLUP);
+  }
+
   Serial.begin(9600);
   Serial1.begin(9600, SERIAL_8N1, 3, 1);
-  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
+  //FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   Serial.println("");
@@ -524,24 +552,17 @@ void setup() {
   pms7003.init(&Serial1);
   // Wait for connection
   while (WiFi.status() != WL_CONNECTED) {
-    leds[0] = CRGB(100, 100, 0);
-    FastLED.show();
-    delay(250);
-    leds[0] = CRGB(0, 0, 0);
-    FastLED.show();
-    delay(250);
-    Serial.print(".");
+    errLeds();
   }
   Serial.println("");
   Serial.print("Connected to ");
   Serial.println(ssid);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
-    leds[0] = CRGB(0, 100, 0);
-    FastLED.show();
+
     delay(1000);
-    leds[0] = CRGB(0, 0, 0);
-    FastLED.show();
+
+
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     delay(250);
     struct tm timeinfo;
@@ -612,6 +633,7 @@ void setup() {
     }
 
     /* Whenever new data is available call the newDataCallback function */
+    envSensor.setTemperatureOffset(5.0);
     envSensor.attachCallback(newDataCallback);
 
   String output = "\nBSEC library version " + String(envSensor.version.major) + "." + String(envSensor.version.minor) + "." + String(envSensor.version.major_bugfix) + "." + String(envSensor.version.minor_bugfix);
@@ -672,6 +694,7 @@ void loop() {
         bridge2.virtualWrite(V73, humSHT);
         bridge2.virtualWrite(V74, abshumSHT);
         bridge2.virtualWrite(V75, bmeiaq);
+        bridge2.virtualWrite(V76, presBME);
         Blynk.virtualWrite(V7, pm10Avg.mean());
         Blynk.virtualWrite(V8, up3);
         Blynk.virtualWrite(V9, up5);
