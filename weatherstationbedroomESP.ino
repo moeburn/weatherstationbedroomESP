@@ -6,7 +6,7 @@
 #include <BlynkSimpleEsp32.h>
 #include "time.h"
 //#include <PMserial.h> // Arduino library for PM sensors with serial interface
-//#include <FastLED.h>
+#include <FastLED.h>
 #include "Adafruit_SHT31.h"
 #include <Average.h>
 #if defined(ARDUINO_ARCH_ESP32) || (ARDUINO_ARCH_ESP8266)
@@ -15,14 +15,21 @@
 #endif
 #include <bsec2.h>
 #include "config/bme680_iaq_33v_3s_28d/bsec_iaq.h"
+#include "FS.h"
+#include "SD.h"
+#include <SPI.h>
+
+#define SD_CS 5
+String dataMessage;
 
 #include "Plantower_PMS7003.h"
 char output[256];
 Plantower_PMS7003 pms7003 = Plantower_PMS7003();
 
-//#define LED_PIN 15  //d2
-//#define NUM_LEDS 3
-//CRGB leds[NUM_LEDS];
+#define LED_PIN 15  
+#define BUTTON_PIN 4
+#define NUM_LEDS 1
+CRGB leds[NUM_LEDS];
 AsyncWebServer server(80);
 Average<float> pm1Avg(30);
 Average<float> pm25Avg(30);
@@ -40,6 +47,8 @@ const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -18000;  //Replace with your GMT offset (secs)
 const int daylightOffset_sec = 0;   //Replace with your daylight offset (secs)
 int hours, mins, secs;
+bool buttonpressed = false;
+bool buttonstart = false;
 
 char auth[] = "eT_7FL7IUpqonthsAr-58uTK_-su_GYy"; //BLYNK
 char remoteAuth[] = "pO--Yj8ksH2fjJLMW6yW9trkHBhd9-wc";
@@ -317,9 +326,11 @@ void errLeds(void)
 {
     //while(1)
     //{
-        digitalWrite(PANIC_LED, HIGH);
+        leds[0] = CRGB(100, 0, 0);
+        FastLED.show();
         delay(ERROR_DUR);
-        digitalWrite(PANIC_LED, LOW);
+        leds[0] = CRGB(0, 0, 0);
+        FastLED.show();
         delay(ERROR_DUR);
     //}
 }
@@ -477,64 +488,161 @@ void readPMS() {
         new1p0 = pms7003.getPM_1_0();
         new2p5 = pms7003.getPM_2_5();
         new10 = pms7003.getPM_10_0();
-                if (firstvalue == 0)  //do not do this on the first run
-        {
-            if (new1p0 > 200) {new1p0 = old1p0;} //check for data spikes in particle counter, ignore data that is >200
-            if (new2p5 > 200) {new2p5 = old2p5;} //data spikes ruin pretty graph
-            if (new10 > 200) {new10 = old10;}
-            if (new1p0 - old1p0 > 50) {new1p0 = old1p0;} //also ignore data that is >50 off from last data
-            if (new2p5 - old2p5 > 50) {new2p5 = old2p5;}
-            if (new10 - old10 > 50) {new10 = old10;}
-        }
+
         pm1Avg.push(new1p0);
         pm25Avg.push(new2p5);
         pm10Avg.push(new10);
-        old1p0 = new1p0; //reset data spike check variable
-        old2p5 = new2p5;
-        old10 = new10;
 
         new1p0a = pms7003.getPM_1_0_atmos(); 
         new2p5a = pms7003.getPM_2_5_atmos();
         new10a = pms7003.getPM_10_0_atmos();
-                if (firstvalue == 0)  //do not do this on the first run
-        {
-            if (new1p0a > 200) {new1p0a = old1p0a;} //check for data spikes in particle counter, ignore data that is >200
-            if (new2p5a > 200) {new2p5a = old2p5a;} //data spikes ruin pretty graph
-            if (new10a > 200) {new10a = old10a;}
-            if (new1p0a - old1p0a > 50) {new1p0a = old1p0a;} //also ignore data that is >50 off from last data
-            if (new2p5a - old2p5a > 50) {new2p5a = old2p5a;}
-            if (new10a - old10a > 50) {new10a = old10a;}
-        }
         pm1aAvg.push(new1p0a);
         pm25aAvg.push(new2p5a);
         pm10aAvg.push(new10a);
-        old1p0a = new1p0a; //reset data spike check variable
-        old2p5a = new2p5a;
-        old10a = new10a;        
+   
        up3 = pms7003.getRawGreaterThan_0_3();
        up5 = pms7003.getRawGreaterThan_0_5();
        up10 = pms7003.getRawGreaterThan_1_0();
        up25 = pms7003.getRawGreaterThan_2_5();
        up50 = pms7003.getRawGreaterThan_5_0();
        up100 = pms7003.getRawGreaterThan_10_0();
-    firstvalue = 0;
   }
+}
+
+void logSDCard() {
+  tempSHT = sht31.readTemperature();
+  humSHT = sht31.readHumidity();
+  abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
+  dataMessage = String(millis()) + "," + String(tempSHT) + "," + String(abshumSHT) + "," + 
+                String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "\r\n";
+  //terminal.print("Save data: ");
+  //terminal.println(dataMessage);
+  appendFile(SD, "/data.txt", dataMessage.c_str());
+  //terminal.flush();
+}
+
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
+    terminal.printf("Listing directory: %s\n", dirname);
+
+    File root = fs.open(dirname);
+    if(!root){
+        terminal.println("Failed to open directory");
+        return;
+    }
+    if(!root.isDirectory()){
+        terminal.println("Not a directory");
+        return;
+    }
+
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            terminal.print("  DIR : ");
+            terminal.println(file.name());
+            if(levels){
+                listDir(fs, file.path(), levels -1);
+            }
+        } else {
+            terminal.print("  FILE: ");
+            terminal.print(file.name());
+            terminal.print("  SIZE: ");
+            terminal.println(file.size());
+        }
+        file = root.openNextFile();
+    }
+    terminal.flush();
+}
+
+void createDir(fs::FS &fs, const char * path){
+    terminal.printf("Creating Dir: %s\n", path);
+    if(fs.mkdir(path)){
+        terminal.println("Dir created");
+    } else {
+        terminal.println("mkdir failed");
+    }
+    terminal.flush();
+}
+
+void removeDir(fs::FS &fs, const char * path){
+    terminal.printf("Removing Dir: %s\n", path);
+    if(fs.rmdir(path)){
+        terminal.println("Dir removed");
+    } else {
+        terminal.println("rmdir failed");
+    }
+    terminal.flush();
+}
+
+void readFile(fs::FS &fs, const char * path){
+    terminal.printf("Reading file: %s\n", path);
+
+    File file = fs.open(path);
+    if(!file){
+        terminal.println("Failed to open file for reading");
+        return;
+    }
+
+    terminal.print("Read from file: ");
+    while(file.available()){
+        terminal.write(file.read());
+    }
+    file.close();
+    terminal.flush();
+}
+
+
+// Write to the SD card (DON'T MODIFY THIS FUNCTION)
+void writeFile(fs::FS &fs, const char * path, const char * message) {
+  terminal.printf("Writing file: %s\n", path);
+
+  File file = fs.open(path, FILE_WRITE);
+  if(!file) {
+    terminal.println("Failed to open file for writing");
+    return;
+  }
+  if(file.print(message)) {
+    terminal.println("File written");
+  } else {
+    terminal.println("Write failed");
+  }
+  file.close();
+  terminal.flush();
+}
+
+// Append data to the SD card (DON'T MODIFY THIS FUNCTION)
+void appendFile(fs::FS &fs, const char * path, const char * message) {
+  //terminal.printf("Appending to file: %s\n", path);
+
+  File file = fs.open(path, FILE_APPEND);
+  if(!file) {
+    terminal.println("Failed to open file for appending");
+    return;
+  }
+  if(file.print(message)) {
+    //terminal.println("Message appended");
+  } else {
+    terminal.println("Append failed");
+  }
+  file.close();
+  terminal.flush();
 }
 
 
 void setup() {
   setCpuFrequencyMhz(80);
-  pinMode(4, INPUT_PULLUP);
+  pinMode(BUTTON_PIN, INPUT_PULLUP); //BUTTON PIN
+  delay(2);
+  if (digitalRead(BUTTON_PIN) == HIGH){ buttonstart = true;}
   pinMode(0, INPUT_PULLUP);
   pinMode(2, INPUT_PULLUP);
-  pinMode(5, INPUT_PULLUP);  //5, 15, 16, 17, 18 in use, disable rest
+  //pinMode(5, INPUT_PULLUP);  //VSPI pins commented out
   pinMode(14, INPUT_PULLUP);
   pinMode(13, INPUT_PULLUP);
   pinMode(12, INPUT_PULLUP);
-  for(int i=15; i<=19; i++) {
+  for(int i=15; i<=17; i++) {
     pinMode(i, INPUT_PULLUP);
   }
-  pinMode(23, INPUT_PULLUP);
+  //pinMode(23, INPUT_PULLUP);
   pinMode(25, INPUT_PULLUP);
   pinMode(26, INPUT_PULLUP);
   pinMode(27, INPUT_PULLUP);
@@ -544,25 +652,44 @@ void setup() {
 
   Serial.begin(9600);
   Serial1.begin(9600, SERIAL_8N1, 3, 1);
-  //FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  Serial.println("");
+  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
+    Serial.println("");
   sht31.begin(0x44);
   pms7003.init(&Serial1);
-  // Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
-    errLeds();
+
+  if (!buttonstart){
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+
+    // Wait for connection
+
+    while (WiFi.status() != WL_CONNECTED) {
+      leds[0] = CRGB(100, 100, 0);
+      FastLED.show();
+      delay(250);
+      leds[0] = CRGB(0, 0, 0);
+      FastLED.show();
+      delay(250);
+      Serial.print(".");
+    }
   }
-  Serial.println("");
-  Serial.print("Connected to ");
-  Serial.println(ssid);
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-
-    delay(1000);
-
-
+  else {
+    leds[0] = CRGB(0, 0, 100);
+      FastLED.show();
+  delay(1000);
+  }
+  leds[0] = CRGB(0, 100, 0);
+  FastLED.show();
+  delay(1000);
+  leds[0] = CRGB(0, 0, 0);
+  FastLED.show();
+  
+  if (!buttonstart){
+    Serial.println("");
+    Serial.print("Connected to ");
+    Serial.println(ssid);
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     delay(250);
     struct tm timeinfo;
@@ -570,99 +697,142 @@ void setup() {
     hours = timeinfo.tm_hour;
     mins = timeinfo.tm_min;
     secs = timeinfo.tm_sec;
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", "Hi! I am ESP32, weatherstationbedroomESP.");
-  });
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+      request->send(200, "text/plain", "Hi! I am ESP32, weatherstationbedroomESP.");
+    });
 
-  AsyncElegantOTA.begin(&server);    // Start ElegantOTA
-  server.begin();
-  Serial.println("HTTP server started");
+    AsyncElegantOTA.begin(&server);    // Start ElegantOTA
+    server.begin();
+    Serial.println("HTTP server started");
     Blynk.config(auth, IPAddress(192, 168, 50, 197), 8080);
     Blynk.connect();
+  }
   tempBME = sht31.readTemperature();
-   humBME = sht31.readHumidity();
+  humBME = sht31.readHumidity();
 
 
-    bsecSensor sensorList[13] = {
-    BSEC_OUTPUT_IAQ,
-    BSEC_OUTPUT_STATIC_IAQ,
-    BSEC_OUTPUT_CO2_EQUIVALENT,
-    BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
-    BSEC_OUTPUT_RAW_TEMPERATURE,
-    BSEC_OUTPUT_RAW_PRESSURE,
-    BSEC_OUTPUT_RAW_HUMIDITY,
-    BSEC_OUTPUT_RAW_GAS,
-    BSEC_OUTPUT_STABILIZATION_STATUS,
-    BSEC_OUTPUT_RUN_IN_STATUS,
-    BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
-    BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
-    BSEC_OUTPUT_GAS_PERCENTAGE
-    };
-  
-    #ifdef USE_EEPROM
-    EEPROM.begin(BSEC_MAX_STATE_BLOB_SIZE + 1);
+  bsecSensor sensorList[13] = {
+  BSEC_OUTPUT_IAQ,
+  BSEC_OUTPUT_STATIC_IAQ,
+  BSEC_OUTPUT_CO2_EQUIVALENT,
+  BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
+  BSEC_OUTPUT_RAW_TEMPERATURE,
+  BSEC_OUTPUT_RAW_PRESSURE,
+  BSEC_OUTPUT_RAW_HUMIDITY,
+  BSEC_OUTPUT_RAW_GAS,
+  BSEC_OUTPUT_STABILIZATION_STATUS,
+  BSEC_OUTPUT_RUN_IN_STATUS,
+  BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
+  BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
+  BSEC_OUTPUT_GAS_PERCENTAGE
+  };
+
+  #ifdef USE_EEPROM
+   EEPROM.begin(BSEC_MAX_STATE_BLOB_SIZE + 1);
   #endif
-    Wire.begin();
-    pinMode(PANIC_LED, OUTPUT);
+  Wire.begin();
+  //pinMode(PANIC_LED, OUTPUT);
 
-    /* Valid for boards with USB-COM. Wait until the port is open */
-    while (!Serial) delay(10);
-   
-    /* Initialize the library and interfaces */
-    if (!envSensor.begin(BME68X_I2C_ADDR_LOW, Wire))
-    {
-        checkBsecStatus(envSensor);
-    }
+  /* Valid for boards with USB-COM. Wait until the port is open */
+  while (!Serial) delay(10);
+  
+  /* Initialize the library and interfaces */
+  if (!envSensor.begin(BME68X_I2C_ADDR_LOW, Wire))
+  {
+      checkBsecStatus(envSensor);
+  }
 
-    /* Load the configuration string that stores information on how to classify the detected gas */
-    if (!envSensor.setConfig(bsec_config_iaq))
-    {
-        checkBsecStatus (envSensor);
-    }
+  /* Load the configuration string that stores information on how to classify the detected gas */
+  if (!envSensor.setConfig(bsec_config_iaq))
+  {
+      checkBsecStatus (envSensor);
+  }
 
-    /* Copy state from the EEPROM to the algorithm */
-    if (!loadState(envSensor))
-    {
-        checkBsecStatus (envSensor);
-    }
+  /* Copy state from the EEPROM to the algorithm */
+  if (!loadState(envSensor))
+  {
+      checkBsecStatus (envSensor);
+  }
 
-    /* Subscribe for the desired BSEC2 outputs */
-    if (!envSensor.updateSubscription(sensorList, 13, BSEC_SAMPLE_RATE_LP))
-    {
-        checkBsecStatus (envSensor);
-    }
+  /* Subscribe for the desired BSEC2 outputs */
+  if (!envSensor.updateSubscription(sensorList, 13, BSEC_SAMPLE_RATE_LP))
+  {
+      checkBsecStatus (envSensor);
+  }
 
-    /* Whenever new data is available call the newDataCallback function */
-    envSensor.setTemperatureOffset(5.0);
-    envSensor.attachCallback(newDataCallback);
+  /* Whenever new data is available call the newDataCallback function */
+  envSensor.setTemperatureOffset(5.0);
+  envSensor.attachCallback(newDataCallback);
 
   String output = "\nBSEC library version " + String(envSensor.version.major) + "." + String(envSensor.version.minor) + "." + String(envSensor.version.major_bugfix) + "." + String(envSensor.version.minor_bugfix);
-                //terminal.clear();
-				terminal.println("----------------------------------");
-				terminal.println("STARTING BEDROOM BLYNK SERVER v2.1");
-                terminal.println(output);
-				printLocalTime(); //print current time to Blynk terminal
-                terminal.println("----------------------------------");
-                
-                terminal.println("Type 'help' for a list of commands");
-				terminal.flush();
+  if (!buttonstart){
+    terminal.println("----------------------------------");
+    terminal.println("STARTING BEDROOM BLYNK SERVER v2.1");
+    terminal.println(output);
+    printLocalTime(); //print current time to Blynk terminal
+    terminal.println("----------------------------------");
+
+    terminal.println("Type 'help' for a list of commands");
+    terminal.flush();
+  }
+  else {
+    SPI.begin();
+    SD.begin(SD_CS);  
+    if(!SD.begin(SD_CS)) {
+      terminal.println("Card Mount Failed");
+      return;
+    }
+    uint8_t cardType = SD.cardType();
+    if(cardType == CARD_NONE) {
+      terminal.println("No SD card attached");
+      return;
+    }
+    terminal.println("Initializing SD card...");
+    if (!SD.begin(SD_CS)) {
+      terminal.println("ERROR - SD card initialization failed!");
+      return;    // init failed
+    }
+      listDir(SD, "/", 0);
+      writeFile(SD, "/data.txt", "Time, Temp, Abshum, PM2.5, 0.3U, IAQ, Pressure \r\n");
+
+
+
+    terminal.flush();
+  }
 }
 
 void loop() {
-      if (!envSensor.run()) {
-        checkBsecStatus (envSensor);
-    }
-    pms7003.updateFrame();
-    readPMS();
+  if (digitalRead(BUTTON_PIN) == HIGH){ //button is normally closed, pressed open
+    buttonpressed = true;
+  }
+
+
+
+  if (!envSensor.run()) {
+      checkBsecStatus (envSensor);
+  }
+
+  pms7003.updateFrame();
+  readPMS();
+
   if (WiFi.status() == WL_CONNECTED) {Blynk.run();} 
 
   if  (millis() - millisAvg >= 1000)  //if it's been 1 second
     {
+      if (!buttonstart){
         wifiAvg.push(WiFi.RSSI());
+      }
+      else {
+        leds[0] = CRGB(10, 0, 10);
+        FastLED.show();
+        logSDCard();
+        leds[0] = CRGB(0, 0, 0);
+        FastLED.show();
+        }
         millisAvg = millis();
     }
 
-  if  (millis() - millisBlynk >= blynkWait) //if it's been blynkWait seconds 
+  if  ((millis() - millisBlynk >= blynkWait) && (!buttonstart)) //if it's been blynkWait seconds 
     {
         tempSHT = sht31.readTemperature();
         humSHT = sht31.readHumidity();
