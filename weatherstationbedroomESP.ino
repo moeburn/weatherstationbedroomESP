@@ -19,6 +19,11 @@
 #include "SD.h"
 #include <SPI.h>
 
+#include <Adafruit_SCD30.h>
+
+Adafruit_SCD30  scd30;
+#define SCD_OFFSET 210
+
 #define SD_CS 5
 String dataMessage;
 
@@ -41,6 +46,10 @@ Average<float> wifiAvg(30);
 
 Adafruit_SHT31 sht31 = Adafruit_SHT31();
 
+#define every(interval) \
+    static uint32_t __every__##interval = millis(); \
+    if (millis() - __every__##interval >= interval && (__every__##interval = millis()))
+
 //SerialPM pms(PMSx003, Serial); // PMSx003, UART
 
 const char* ntpServer = "pool.ntp.org";
@@ -51,8 +60,8 @@ bool buttonpressed = false;
 bool buttonstart = false;
 
 char auth[] = "eT_7FL7IUpqonthsAr-58uTK_-su_GYy"; //BLYNK
-char remoteAuth[] = "pO--Yj8ksH2fjJLMW6yW9trkHBhd9-wc";
-char remoteAuth2[] = "8_-CN2rm4ki9P3i_NkPhxIbCiKd5RXhK";
+char remoteAuth[] = "pO--Yj8ksH2fjJLMW6yW9trkHBhd9-wc"; //costello auth
+char remoteAuth2[] = "8_-CN2rm4ki9P3i_NkPhxIbCiKd5RXhK"; //hubert clock auth
 
 const char* ssid = "mikesnet";
 const char* password = "springchicken";
@@ -61,6 +70,7 @@ float old1p0, old2p5, old10, new1p0, new2p5, new10;
 float old1p0a, old2p5a, old10a, new1p0a, new2p5a, new10a;
 unsigned int up3, up5, up10, up25, up50, up100;
 float abshumBME, tempBME, presBME, humBME, gasBME, dewpoint, humidex, tempSHT, humSHT, abshumSHT, dewpointSHT, humidexSHT;
+float tempSCD, humSCD, co2SCD, abshumSCD;
 float bmeiaq, bmeiaqAccuracy, bmestaticIaq, bmeco2Equivalent, bmebreathVocEquivalent, bmestabStatus, bmerunInStatus, bmegasPercentage;
 int firstvalue = 1;
 int blynkWait = 30000;
@@ -78,7 +88,7 @@ float  pmR, pmG, pmB;
 bool rgbON = true;
 
 WidgetTerminal terminal(V14); //terminal widget
-WidgetBridge bridge1(V70);
+//WidgetBridge bridge1(V70);
 WidgetBridge bridge2(V60);
 
 
@@ -136,7 +146,7 @@ const String gasName[] = { "Field Air", "Hand sanitizer", "Undefined 3", "Undefi
 
 
 BLYNK_CONNECTED() {
-  bridge1.setAuthToken (remoteAuth);
+  //bridge1.setAuthToken (remoteAuth);
   bridge2.setAuthToken (remoteAuth2);
 }
 
@@ -206,6 +216,9 @@ BLYNK_WRITE(V14)
     terminal.println("rapidoff");
     terminal.println("heater");
     terminal.println("erase");
+    terminal.println("recal");
+    terminal.println("scd");
+
     
      terminal.println("==End of list.==");
     }
@@ -229,11 +242,18 @@ BLYNK_WRITE(V14)
         terminal.print(",,,");
         terminal.print(humidex);
         terminal.print(",,,");
-        terminal.println(dewpoint);
-        terminal.print("tempSHT =");
-        terminal.println(tempSHT);
-        terminal.print("humSHT =");
-        terminal.println(humSHT);
+        terminal.print(dewpoint);
+        terminal.print(", tempSHT =");
+        terminal.print(tempSHT);
+        terminal.print(", humSHT =");
+        terminal.print(humSHT);
+        terminal.print(", tempSCD =");
+        terminal.print(tempSCD);
+        terminal.print(", humSCD =");
+        terminal.print(humSCD);
+        terminal.print(", CO2 =");
+        terminal.print(co2SCD);
+        terminal.flush();
     }
     if (String("wets") == param.asStr()) {
         terminal.print("humBME[v3],abshumBME[v4],presBME[v1],gasBME[v7]: ");
@@ -318,8 +338,34 @@ BLYNK_WRITE(V14)
 
       EEPROM.commit();
       terminal.flush();
+    }
+    if (String("recal") == param.asStr()) {
+      if (!scd30.forceRecalibrationWithReference(400)){
+        terminal.println("Failed to force recalibration with reference");
+      }
+      else {terminal.println("> Recalibrated CO2 sensor.");}
       terminal.flush();
     }
+    if (String("scd") == param.asStr()) {
+      if (!scd30.startContinuousMeasurement(int(presBME))){
+        terminal.println("Failed to set ambient pressure offset");
+        terminal.flush();
+      }
+      terminal.print("Measurement interval: ");
+      terminal.print(scd30.getMeasurementInterval());
+      terminal.println(" seconds");
+      terminal.print("Ambient pressure offset: ");
+      terminal.print(scd30.getAmbientPressureOffset());
+      terminal.println(" mBar");
+      terminal.print("Temperature offset: ");
+      terminal.print((float)scd30.getTemperatureOffset()/100.0);
+      terminal.println(" degrees C");
+      terminal.print("Forced Recalibration reference: ");
+      terminal.print(scd30.getForcedCalibrationReference());
+      terminal.println(" ppm");
+      terminal.flush();
+    }
+terminal.flush();
 }
 
 void errLeds(void)
@@ -514,7 +560,7 @@ void logSDCard() {
   humSHT = sht31.readHumidity();
   abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
   dataMessage = String(millis()) + "," + String(tempSHT) + "," + String(abshumSHT) + "," + 
-                String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "\r\n";
+                String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "," + String(co2SCD) + "\r\n";
   //terminal.print("Save data: ");
   //terminal.println(dataMessage);
   appendFile(SD, "/data.txt", dataMessage.c_str());
@@ -683,6 +729,9 @@ void setup() {
   delay(1000);
   leds[0] = CRGB(0, 0, 0);
   FastLED.show();
+
+
+
   
   if (!buttonstart){
     Serial.println("");
@@ -793,17 +842,60 @@ void setup() {
       return;    // init failed
     }
       listDir(SD, "/", 0);
-      writeFile(SD, "/data.txt", "Time, Temp, Abshum, PM2.5, 0.3U, IAQ, Pressure \r\n");
+      writeFile(SD, "/data.txt", "Time, Temp, Abshum, PM2.5, 0.3U, IAQ, Pressure, CO2 \r\n");
 
 
 
+    terminal.flush();
+  }
+
+  if (!scd30.begin()) {
+    terminal.println("Failed to find SCD30 chip");
+    terminal.flush();
+  }
+  else
+  {
+    scd30.setTemperatureOffset(SCD_OFFSET); // subtract 2 degrees
+    terminal.print("Measurement interval: ");
+    terminal.print(scd30.getMeasurementInterval());
+    terminal.println(" seconds");
+    terminal.print("Ambient pressure offset: ");
+    terminal.print(scd30.getAmbientPressureOffset());
+    terminal.println(" mBar");
+    terminal.print("Temperature offset: ");
+    terminal.print((float)scd30.getTemperatureOffset()/100.0);
+    terminal.println(" degrees C");
+    terminal.print("Forced Recalibration reference: ");
+    terminal.print(scd30.getForcedCalibrationReference());
+    terminal.println(" ppm");
     terminal.flush();
   }
 }
 
 void loop() {
   if (digitalRead(BUTTON_PIN) == HIGH){ //button is normally closed, pressed open
-    buttonpressed = true;
+    every(100){
+      buttonpressed = !buttonpressed;
+    }
+  }
+
+  if (scd30.dataReady()) {
+        if (!scd30.read()){ 
+      terminal.println("Error reading CO2 sensor data"); 
+      return; 
+    }
+    tempSCD = scd30.temperature;
+    humSCD = scd30.relative_humidity;
+    co2SCD = scd30.CO2;
+  }
+
+  every (120000)
+  {
+       if (!scd30.startContinuousMeasurement(int(presBME))){
+     terminal.println("Failed to set ambient pressure offset");
+     terminal.flush();
+
+   }
   }
 
 
@@ -817,7 +909,7 @@ void loop() {
 
   if (WiFi.status() == WL_CONNECTED) {Blynk.run();} 
 
-  if  (millis() - millisAvg >= 1000)  //if it's been 1 second
+  if  (millis() - millisAvg >= 3000)  //if it's been 3 second
     {
       if (!buttonstart){
         wifiAvg.push(WiFi.RSSI());
@@ -828,7 +920,15 @@ void loop() {
         logSDCard();
         leds[0] = CRGB(0, 0, 0);
         FastLED.show();
-        }
+      }
+      if (buttonpressed){
+        leds[0] = CRGB(20, 0, 0);
+        FastLED.show();
+      }
+      else {
+        leds[0] = CRGB(0, 0, 0);
+        FastLED.show();       
+      }
         millisAvg = millis();
     }
 
@@ -839,6 +939,7 @@ void loop() {
         millisBlynk = millis();
         abshumBME = (6.112 * pow(2.71828, ((17.67 * tempBME)/(tempBME + 243.5))) * humBME * 2.1674)/(273.15 + tempBME);
         abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
+        abshumSCD = (6.112 * pow(2.71828, ((17.67 * tempSCD)/(tempSCD + 243.5))) * humSCD * 2.1674)/(273.15 + tempSCD);
         dewpoint = tempBME - ((100 - humBME)/5); //calculate dewpoint
         humidex = tempBME + 0.5555 * (6.11 * pow(2.71828, 5417.7530*( (1/273.16) - (1/(273.15 + dewpoint)) ) ) - 10); //calculate humidex using Environment Canada formula
         dewpointSHT = tempSHT - ((100 - humSHT)/5); //calculate dewpoint
@@ -855,16 +956,17 @@ void loop() {
         }
         Blynk.virtualWrite(V5, pm1Avg.mean());
         Blynk.virtualWrite(V6, pm25Avg.mean());
-        bridge1.virtualWrite(V71, pm25Avg.mean());
-        bridge1.virtualWrite(V72, bridgedata);
-        bridge1.virtualWrite(V73, bridgetemp);
-        bridge1.virtualWrite(V74, bridgehum);
+        //bridge1.virtualWrite(V71, pm25Avg.mean());
+        //bridge1.virtualWrite(V72, bridgedata);
+        //bridge1.virtualWrite(V73, bridgetemp);
+        //bridge1.virtualWrite(V74, bridgehum);
         bridge2.virtualWrite(V71, pm25Avg.mean());
         bridge2.virtualWrite(V72, tempSHT);
         bridge2.virtualWrite(V73, humSHT);
         bridge2.virtualWrite(V74, abshumSHT);
         bridge2.virtualWrite(V75, bmeiaq);
         bridge2.virtualWrite(V76, presBME);
+        bridge2.virtualWrite(V77, co2SCD);
         Blynk.virtualWrite(V7, pm10Avg.mean());
         Blynk.virtualWrite(V8, up3);
         Blynk.virtualWrite(V9, up5);
@@ -886,10 +988,16 @@ void loop() {
 
         Blynk.virtualWrite(V33, gasBME);
         Blynk.virtualWrite(V34, wifiAvg.mean());
+        if (!buttonpressed){
         Blynk.virtualWrite(V36, tempSHT);
         Blynk.virtualWrite(V37, humSHT);
         Blynk.virtualWrite(V38, abshumSHT);
         Blynk.virtualWrite(V39, humidexSHT);
         Blynk.virtualWrite(V41, dewpointSHT);
+        }
+        Blynk.virtualWrite(V42, tempSCD);
+        Blynk.virtualWrite(V43, humSCD);
+        Blynk.virtualWrite(V45, co2SCD);
+        Blynk.virtualWrite(V46, abshumSCD);
     }
 }
