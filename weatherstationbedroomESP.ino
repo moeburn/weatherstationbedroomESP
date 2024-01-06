@@ -7,7 +7,7 @@
 #include "time.h"
 //#include <PMserial.h> // Arduino library for PM sensors with serial interface
 #include <FastLED.h>
-#include "Adafruit_SHT31.h"
+
 #include <Average.h>
 #if defined(ARDUINO_ARCH_ESP32) || (ARDUINO_ARCH_ESP8266)
 #include <EEPROM.h>
@@ -20,6 +20,10 @@
 #include <SPI.h>
 
 #include <Adafruit_SCD30.h>
+#include "Adafruit_SHT4x.h"
+
+Adafruit_SHT4x sht4 = Adafruit_SHT4x();
+  sensors_event_t humidity, temp;
 
 Adafruit_SCD30  scd30;
 #define SCD_OFFSET 210
@@ -44,7 +48,7 @@ Average<float> pm25aAvg(30);
 Average<float> pm10aAvg(30);
 Average<float> wifiAvg(30);
 
-Adafruit_SHT31 sht31 = Adafruit_SHT31();
+
 
 #define every(interval) \
     static uint32_t __every__##interval = millis(); \
@@ -235,8 +239,9 @@ BLYNK_WRITE(V14)
 
 
     if (String("temps") == param.asStr()) {
-        tempSHT = sht31.readTemperature();
-        humSHT = sht31.readHumidity();
+          sht4.getEvent(&humidity, &temp);
+          tempSHT = temp.temperature;
+          humSHT = humidity.relative_humidity;
         terminal.print("tempBME[v0],tempPool[v5],humidex[v31],dewpoint[v2]: ");
         terminal.print(tempBME);
         terminal.print(",,,");
@@ -326,7 +331,7 @@ BLYNK_WRITE(V14)
 
     if (String("heater") == param.asStr()) {
         heater = !heater;
-        sht31.heater(heater);
+  
       terminal.print("> Heater is now: ");
       terminal.print(heater);
     }
@@ -556,8 +561,9 @@ void readPMS() {
 }
 
 void logSDCard() {
-  tempSHT = sht31.readTemperature();
-  humSHT = sht31.readHumidity();
+          sht4.getEvent(&humidity, &temp);
+          tempSHT = temp.temperature;
+          humSHT = humidity.relative_humidity;
   abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
   dataMessage = String(millis()) + "," + String(tempSHT) + "," + String(abshumSHT) + "," + 
                 String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "," + String(co2SCD) + "\r\n";
@@ -700,7 +706,10 @@ void setup() {
   Serial1.begin(9600, SERIAL_8N1, 3, 1);
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
     Serial.println("");
-  sht31.begin(0x44);
+sht4.begin();
+ 
+  sht4.setPrecision(SHT4X_HIGH_PRECISION);
+  sht4.setHeater(SHT4X_NO_HEATER);
   pms7003.init(&Serial1);
 
   if (!buttonstart){
@@ -756,8 +765,9 @@ void setup() {
     Blynk.config(auth, IPAddress(192, 168, 50, 197), 8080);
     Blynk.connect();
   }
-  tempBME = sht31.readTemperature();
-  humBME = sht31.readHumidity();
+          sht4.getEvent(&humidity, &temp);
+          tempSHT = temp.temperature;
+          humSHT = humidity.relative_humidity;
 
 
   bsecSensor sensorList[13] = {
@@ -820,7 +830,9 @@ void setup() {
     terminal.println(output);
     printLocalTime(); //print current time to Blynk terminal
     terminal.println("----------------------------------");
-
+     terminal.println("Found SHT4x sensor");
+    terminal.print("terminal number 0x");
+     terminal.println(sht4.readSerial(), HEX);
     terminal.println("Type 'help' for a list of commands");
     terminal.flush();
   }
@@ -934,8 +946,10 @@ void loop() {
 
   if  ((millis() - millisBlynk >= blynkWait) && (!buttonstart)) //if it's been blynkWait seconds 
     {
-        tempSHT = sht31.readTemperature();
-        humSHT = sht31.readHumidity();
+          sht4.getEvent(&humidity, &temp);
+          tempSHT = temp.temperature;
+          humSHT = humidity.relative_humidity;
+        
         millisBlynk = millis();
         abshumBME = (6.112 * pow(2.71828, ((17.67 * tempBME)/(tempBME + 243.5))) * humBME * 2.1674)/(273.15 + tempBME);
         abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
