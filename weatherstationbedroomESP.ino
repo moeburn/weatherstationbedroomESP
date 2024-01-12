@@ -21,6 +21,9 @@
 
 #include <Adafruit_SCD30.h>
 #include "Adafruit_SHT4x.h"
+#include <Adafruit_ADS1X15.h>
+
+Adafruit_ADS1115 ads; 
 
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
   sensors_event_t humidity, temp;
@@ -70,6 +73,7 @@ char remoteAuth2[] = "8_-CN2rm4ki9P3i_NkPhxIbCiKd5RXhK"; //hubert clock auth
 const char* ssid = "mikesnet";
 const char* password = "springchicken";
 
+float batteryVolts;
 float old1p0, old2p5, old10, new1p0, new2p5, new10;
 float old1p0a, old2p5a, old10a, new1p0a, new2p5a, new10a;
 unsigned int up3, up5, up10, up25, up50, up100;
@@ -565,8 +569,9 @@ void logSDCard() {
           tempSHT = temp.temperature;
           humSHT = humidity.relative_humidity;
   abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
+        batteryVolts = ads.computeVolts(ads.readADC_SingleEnded(0)) * 2.0;
   dataMessage = String(millis()) + "," + String(tempSHT) + "," + String(abshumSHT) + "," + 
-                String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "," + String(co2SCD) + "\r\n";
+                String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "," + String(co2SCD) + "," + String(batteryVolts) + "\r\n"; 
   //terminal.print("Save data: ");
   //terminal.println(dataMessage);
   appendFile(SD, "/data.txt", dataMessage.c_str());
@@ -706,6 +711,8 @@ void setup() {
   Serial1.begin(9600, SERIAL_8N1, 3, 1);
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
     Serial.println("");
+      ads.setGain(GAIN_ONE);
+  ads.begin();  //Init ADS1115
 sht4.begin();
  
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
@@ -854,7 +861,7 @@ sht4.begin();
       return;    // init failed
     }
       listDir(SD, "/", 0);
-      writeFile(SD, "/data.txt", "Time, Temp, Abshum, PM2.5, 0.3U, IAQ, Pressure, CO2 \r\n");
+      writeFile(SD, "/data.txt", "Time, Temp, Abshum, PM2.5, 0.3U, IAQ, Pressure, CO2, Battery \r\n");
 
 
 
@@ -933,14 +940,14 @@ void loop() {
         leds[0] = CRGB(0, 0, 0);
         FastLED.show();
       }
-      if (buttonpressed){
-        leds[0] = CRGB(20, 0, 0);
-        FastLED.show();
-      }
-      else {
-        leds[0] = CRGB(0, 0, 0);
-        FastLED.show();       
-      }
+      //if (buttonpressed){
+      //  leds[0] = CRGB(20, 0, 0);
+     //   FastLED.show();
+    //  }
+    //  else {
+     //   leds[0] = CRGB(0, 0, 0);
+    //    FastLED.show();       
+    //  }
         millisAvg = millis();
     }
 
@@ -949,7 +956,7 @@ void loop() {
           sht4.getEvent(&humidity, &temp);
           tempSHT = temp.temperature;
           humSHT = humidity.relative_humidity;
-        
+        batteryVolts = ads.computeVolts(ads.readADC_SingleEnded(0)) * 2.0;
         millisBlynk = millis();
         abshumBME = (6.112 * pow(2.71828, ((17.67 * tempBME)/(tempBME + 243.5))) * humBME * 2.1674)/(273.15 + tempBME);
         abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
@@ -1002,16 +1009,17 @@ void loop() {
 
         Blynk.virtualWrite(V33, gasBME);
         Blynk.virtualWrite(V34, wifiAvg.mean());
-        if (!buttonpressed){
+        //if (!buttonpressed){
         Blynk.virtualWrite(V36, tempSHT);
         Blynk.virtualWrite(V37, humSHT);
         Blynk.virtualWrite(V38, abshumSHT);
         Blynk.virtualWrite(V39, humidexSHT);
         Blynk.virtualWrite(V41, dewpointSHT);
-        }
+        //}
         Blynk.virtualWrite(V42, tempSCD);
         Blynk.virtualWrite(V43, humSCD);
         Blynk.virtualWrite(V45, co2SCD);
         Blynk.virtualWrite(V46, abshumSCD);
+        Blynk.virtualWrite(V47, batteryVolts);
     }
 }
