@@ -67,7 +67,7 @@ bool buttonpressed = false;
 bool buttonstart = false;
 
 char auth[] = "eT_7FL7IUpqonthsAr-58uTK_-su_GYy"; //BLYNK
-char remoteAuth[] = "pO--Yj8ksH2fjJLMW6yW9trkHBhd9-wc"; //costello auth
+char remoteAuth[] = "Eg3J3WA0zM3MA7HGJjT_P6uUh73wQ2ed"; //dude  auth
 char remoteAuth2[] = "8_-CN2rm4ki9P3i_NkPhxIbCiKd5RXhK"; //hubert clock auth
 
 const char* ssid = "mikesnet";
@@ -96,7 +96,7 @@ float  pmR, pmG, pmB;
 bool rgbON = true;
 
 WidgetTerminal terminal(V14); //terminal widget
-//WidgetBridge bridge1(V70);
+WidgetBridge bridge1(V70);
 WidgetBridge bridge2(V60);
 
 
@@ -154,7 +154,7 @@ const String gasName[] = { "Field Air", "Hand sanitizer", "Undefined 3", "Undefi
 
 
 BLYNK_CONNECTED() {
-  //bridge1.setAuthToken (remoteAuth);
+  bridge1.setAuthToken (remoteAuth);
   bridge2.setAuthToken (remoteAuth2);
 }
 
@@ -571,7 +571,7 @@ void logSDCard() {
   abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
         batteryVolts = ads.computeVolts(ads.readADC_SingleEnded(0)) * 2.0;
   dataMessage = String(millis()) + "," + String(tempSHT) + "," + String(abshumSHT) + "," + 
-                String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "," + String(co2SCD) + "," + String(batteryVolts) + "\r\n"; 
+                String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "," + String(co2SCD) + "," + String(batteryVolts, 4) + "\r\n"; 
   //terminal.print("Save data: ");
   //terminal.println(dataMessage);
   appendFile(SD, "/data.txt", dataMessage.c_str());
@@ -977,10 +977,12 @@ void loop() {
         }
         Blynk.virtualWrite(V5, pm1Avg.mean());
         Blynk.virtualWrite(V6, pm25Avg.mean());
+        
         //bridge1.virtualWrite(V71, pm25Avg.mean());
         //bridge1.virtualWrite(V72, bridgedata);
         //bridge1.virtualWrite(V73, bridgetemp);
-        //bridge1.virtualWrite(V74, bridgehum);
+        bridge1.virtualWrite(V74, co2SCD);
+
         bridge2.virtualWrite(V71, pm25Avg.mean());
         bridge2.virtualWrite(V72, tempSHT);
         bridge2.virtualWrite(V73, humSHT);
