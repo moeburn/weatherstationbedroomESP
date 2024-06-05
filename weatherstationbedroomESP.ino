@@ -21,9 +21,7 @@
 
 #include <Adafruit_SCD30.h>
 #include "Adafruit_SHT4x.h"
-#include <Adafruit_ADS1X15.h>
 
-Adafruit_ADS1115 ads; 
 
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
   sensors_event_t humidity, temp;
@@ -39,6 +37,7 @@ char output[256];
 Plantower_PMS7003 pms7003 = Plantower_PMS7003();
 
 #define LED_PIN 15  
+#define ADC_PIN 35
 #define BUTTON_PIN 4
 #define NUM_LEDS 1
 CRGB leds[NUM_LEDS];
@@ -69,6 +68,7 @@ bool buttonstart = false;
 char auth[] = "eT_7FL7IUpqonthsAr-58uTK_-su_GYy"; //BLYNK
 char remoteAuth[] = "Eg3J3WA0zM3MA7HGJjT_P6uUh73wQ2ed"; //dude  auth
 char remoteAuth2[] = "8_-CN2rm4ki9P3i_NkPhxIbCiKd5RXhK"; //hubert clock auth
+char remoteAuth3[] = "qS5PQ8pvrbYzXdiA4I6uLEWYfeQrOcM4"; //indiana clock auth
 
 const char* ssid = "mikesnet";
 const char* password = "springchicken";
@@ -98,6 +98,7 @@ bool rgbON = true;
 WidgetTerminal terminal(V14); //terminal widget
 WidgetBridge bridge1(V70);
 WidgetBridge bridge2(V60);
+WidgetBridge bridge3(V50);
 
 
 #define STATE_SAVE_PERIOD UINT32_C(720 * 60 * 1000) /* 360 minutes - 4 times a day */
@@ -156,6 +157,7 @@ const String gasName[] = { "Field Air", "Hand sanitizer", "Undefined 3", "Undefi
 BLYNK_CONNECTED() {
   bridge1.setAuthToken (remoteAuth);
   bridge2.setAuthToken (remoteAuth2);
+  bridge3.setAuthToken (remoteAuth3);
 }
 
 BLYNK_WRITE(V61){
@@ -187,6 +189,8 @@ BLYNK_WRITE(V16)
      zebraG = param[1].asInt();
      zebraB = param[2].asInt();
 }
+
+
 
 
 
@@ -569,7 +573,7 @@ void logSDCard() {
           tempSHT = temp.temperature;
           humSHT = humidity.relative_humidity;
   abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
-        batteryVolts = ads.computeVolts(ads.readADC_SingleEnded(0)) * 2.0;
+        batteryVolts = analogReadMilliVolts(ADC_PIN) / 500.0;
   dataMessage = String(millis()) + "," + String(tempSHT) + "," + String(abshumSHT) + "," + 
                 String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "," + String(co2SCD) + "," + String(batteryVolts, 4) + "\r\n"; 
   //terminal.print("Save data: ");
@@ -711,8 +715,6 @@ void setup() {
   Serial1.begin(9600, SERIAL_8N1, 3, 1);
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
     Serial.println("");
-      ads.setGain(GAIN_ONE);
-  ads.begin();  //Init ADS1115
 sht4.begin();
  
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
@@ -833,7 +835,7 @@ sht4.begin();
   String output = "\nBSEC library version " + String(envSensor.version.major) + "." + String(envSensor.version.minor) + "." + String(envSensor.version.major_bugfix) + "." + String(envSensor.version.minor_bugfix);
   if (!buttonstart){
     terminal.println("----------------------------------");
-    terminal.println("STARTING BEDROOM BLYNK SERVER v2.1");
+    terminal.println("STARTING BEDROOM BLYNK SERVER v2.2");
     terminal.println(output);
     printLocalTime(); //print current time to Blynk terminal
     terminal.println("----------------------------------");
@@ -956,7 +958,7 @@ void loop() {
           sht4.getEvent(&humidity, &temp);
           tempSHT = temp.temperature;
           humSHT = humidity.relative_humidity;
-        batteryVolts = ads.computeVolts(ads.readADC_SingleEnded(0)) * 2.0;
+        batteryVolts = analogReadMilliVolts(ADC_PIN) / 500.0;
         millisBlynk = millis();
         abshumBME = (6.112 * pow(2.71828, ((17.67 * tempBME)/(tempBME + 243.5))) * humBME * 2.1674)/(273.15 + tempBME);
         abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
@@ -990,6 +992,8 @@ void loop() {
         bridge2.virtualWrite(V75, bmeiaq);
         bridge2.virtualWrite(V76, presBME);
         bridge2.virtualWrite(V77, co2SCD);
+        bridge3.virtualWrite(V71, pm25Avg.mean());
+        bridge3.virtualWrite(V77, co2SCD);
         Blynk.virtualWrite(V7, pm10Avg.mean());
         Blynk.virtualWrite(V8, up3);
         Blynk.virtualWrite(V9, up5);
