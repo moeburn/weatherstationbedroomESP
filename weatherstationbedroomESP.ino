@@ -1,13 +1,15 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncElegantOTA.h>
+
+
 #include <BlynkSimpleEsp32.h>
 #include "time.h"
 //#include <PMserial.h> // Arduino library for PM sensors with serial interface
 #include <FastLED.h>
-
+#include <WiFiManager.h> 
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
 #include <Average.h>
 #if defined(ARDUINO_ARCH_ESP32) || (ARDUINO_ARCH_ESP8266)
 #include <EEPROM.h>
@@ -15,9 +17,10 @@
 #endif
 #include <bsec2.h>
 #include "config/bme680_iaq_33v_3s_28d/bsec_iaq.h"
-#include "FS.h"
-#include "SD.h"
-#include <SPI.h>
+//#include "FS.h"
+#include <nvs_flash.h>
+//#include "SD.h"
+//#include <SPI.h>
 
 #include <Adafruit_SCD30.h>
 #include "Adafruit_SHT4x.h"
@@ -29,8 +32,8 @@ Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 Adafruit_SCD30  scd30;
 #define SCD_OFFSET 210
 
-#define SD_CS 5
-String dataMessage;
+//#define SD_CS 5
+//String dataMessage;
 
 #include "Plantower_PMS7003.h"
 char output[256];
@@ -568,127 +571,6 @@ void readPMS() {
   }
 }
 
-void logSDCard() {
-          sht4.getEvent(&humidity, &temp);
-          tempSHT = temp.temperature;
-          humSHT = humidity.relative_humidity;
-  abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
-        batteryVolts = analogReadMilliVolts(ADC_PIN) / 500.0;
-  dataMessage = String(millis()) + "," + String(tempSHT) + "," + String(abshumSHT) + "," + 
-                String(pm25Avg.mean()) + "," + String(up3) + "," + String(bmeiaq) + "," + String(presBME) + "," + String(co2SCD) + "," + String(batteryVolts, 4) + "\r\n"; 
-  //terminal.print("Save data: ");
-  //terminal.println(dataMessage);
-  appendFile(SD, "/data.txt", dataMessage.c_str());
-  //terminal.flush();
-}
-
-void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
-    terminal.printf("Listing directory: %s\n", dirname);
-
-    File root = fs.open(dirname);
-    if(!root){
-        terminal.println("Failed to open directory");
-        return;
-    }
-    if(!root.isDirectory()){
-        terminal.println("Not a directory");
-        return;
-    }
-
-    File file = root.openNextFile();
-    while(file){
-        if(file.isDirectory()){
-            terminal.print("  DIR : ");
-            terminal.println(file.name());
-            if(levels){
-                listDir(fs, file.path(), levels -1);
-            }
-        } else {
-            terminal.print("  FILE: ");
-            terminal.print(file.name());
-            terminal.print("  SIZE: ");
-            terminal.println(file.size());
-        }
-        file = root.openNextFile();
-    }
-    terminal.flush();
-}
-
-void createDir(fs::FS &fs, const char * path){
-    terminal.printf("Creating Dir: %s\n", path);
-    if(fs.mkdir(path)){
-        terminal.println("Dir created");
-    } else {
-        terminal.println("mkdir failed");
-    }
-    terminal.flush();
-}
-
-void removeDir(fs::FS &fs, const char * path){
-    terminal.printf("Removing Dir: %s\n", path);
-    if(fs.rmdir(path)){
-        terminal.println("Dir removed");
-    } else {
-        terminal.println("rmdir failed");
-    }
-    terminal.flush();
-}
-
-void readFile(fs::FS &fs, const char * path){
-    terminal.printf("Reading file: %s\n", path);
-
-    File file = fs.open(path);
-    if(!file){
-        terminal.println("Failed to open file for reading");
-        return;
-    }
-
-    terminal.print("Read from file: ");
-    while(file.available()){
-        terminal.write(file.read());
-    }
-    file.close();
-    terminal.flush();
-}
-
-
-// Write to the SD card (DON'T MODIFY THIS FUNCTION)
-void writeFile(fs::FS &fs, const char * path, const char * message) {
-  terminal.printf("Writing file: %s\n", path);
-
-  File file = fs.open(path, FILE_WRITE);
-  if(!file) {
-    terminal.println("Failed to open file for writing");
-    return;
-  }
-  if(file.print(message)) {
-    terminal.println("File written");
-  } else {
-    terminal.println("Write failed");
-  }
-  file.close();
-  terminal.flush();
-}
-
-// Append data to the SD card (DON'T MODIFY THIS FUNCTION)
-void appendFile(fs::FS &fs, const char * path, const char * message) {
-  //terminal.printf("Appending to file: %s\n", path);
-
-  File file = fs.open(path, FILE_APPEND);
-  if(!file) {
-    terminal.println("Failed to open file for appending");
-    return;
-  }
-  if(file.print(message)) {
-    //terminal.println("Message appended");
-  } else {
-    terminal.println("Append failed");
-  }
-  file.close();
-  terminal.flush();
-}
-
-
 void setup() {
   setCpuFrequencyMhz(80);
   pinMode(BUTTON_PIN, INPUT_PULLUP); //BUTTON PIN
@@ -720,13 +602,62 @@ sht4.begin();
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
   sht4.setHeater(SHT4X_NO_HEATER);
   pms7003.init(&Serial1);
+  WiFi.mode(WIFI_STA);
+  WiFiManager wm;
 
-  if (!buttonstart){
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
+  if ((buttonstart) || !wm.getWiFiIsSaved()){
+    nvs_flash_erase(); // erase the NVS partition and...
+    nvs_flash_init(); // initialize the NVS partition.
+    wm.resetSettings();
+    
+    leds[0] = CRGB(100, 100, 100);
+    FastLED.show();
+    delay(250);
+    leds[0] = CRGB(0, 0, 0);
+    FastLED.show();
+    delay(250);
+    leds[0] = CRGB(100, 100, 100);
+    FastLED.show();
+    delay(1000);
+    leds[0] = CRGB(0, 0, 0);
+    FastLED.show();
+    bool res;
+    // res = wm.autoConnect(); // auto generated AP name from chipid
+    // res = wm.autoConnect("AutoConnectAP"); // anonymous ap
+    res = wm.autoConnect("JoesWeather"); // password protected ap
 
-    // Wait for connection
-
+    if(!res) {
+        leds[0] = CRGB(100, 0, 0);
+        FastLED.show();
+        delay(250);
+        leds[0] = CRGB(0, 0, 0);
+        FastLED.show();
+        delay(250);
+        leds[0] = CRGB(100, 0, 0);
+        FastLED.show();
+        delay(1000);
+        leds[0] = CRGB(0, 0, 0);
+        FastLED.show();
+        delay(3000);
+        ESP.restart();
+    } 
+    else {
+        //if you get here you have connected to the WiFi    
+        leds[0] = CRGB(0, 100, 0);
+        FastLED.show();
+        delay(250);
+        leds[0] = CRGB(0, 0, 0);
+        FastLED.show();
+        delay(250);
+        leds[0] = CRGB(0, 100, 0);
+        FastLED.show();
+        delay(1000);
+        leds[0] = CRGB(0, 0, 0);
+        FastLED.show();
+    }
+  }
+  else {
+    WiFi.begin(wm.getWiFiSSID(), wm.getWiFiPass());
     while (WiFi.status() != WL_CONNECTED) {
       leds[0] = CRGB(100, 100, 0);
       FastLED.show();
@@ -736,27 +667,12 @@ sht4.begin();
       delay(250);
       Serial.print(".");
     }
+
   }
-  else {
-    leds[0] = CRGB(0, 0, 100);
-      FastLED.show();
-  delay(1000);
-  }
-  leds[0] = CRGB(0, 100, 0);
-  FastLED.show();
-  delay(1000);
-  leds[0] = CRGB(0, 0, 0);
-  FastLED.show();
 
 
 
-  
-  if (!buttonstart){
-    Serial.println("");
-    Serial.print("Connected to ");
-    Serial.println(ssid);
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
     delay(250);
     struct tm timeinfo;
@@ -771,9 +687,9 @@ sht4.begin();
     AsyncElegantOTA.begin(&server);    // Start ElegantOTA
     server.begin();
     Serial.println("HTTP server started");
-    Blynk.config(auth, IPAddress(192, 168, 50, 197), 8080);
+    Blynk.config(auth, IPAddress(216,110,224,105), 8080);
     Blynk.connect();
-  }
+  
           sht4.getEvent(&humidity, &temp);
           tempSHT = temp.temperature;
           humSHT = humidity.relative_humidity;
@@ -833,7 +749,6 @@ sht4.begin();
   envSensor.attachCallback(newDataCallback);
 
   String output = "\nBSEC library version " + String(envSensor.version.major) + "." + String(envSensor.version.minor) + "." + String(envSensor.version.major_bugfix) + "." + String(envSensor.version.minor_bugfix);
-  if (!buttonstart){
     terminal.println("----------------------------------");
     terminal.println("STARTING BEDROOM BLYNK SERVER v2.2");
     terminal.println(output);
@@ -844,31 +759,7 @@ sht4.begin();
      terminal.println(sht4.readSerial(), HEX);
     terminal.println("Type 'help' for a list of commands");
     terminal.flush();
-  }
-  else {
-    SPI.begin();
-    SD.begin(SD_CS);  
-    if(!SD.begin(SD_CS)) {
-      terminal.println("Card Mount Failed");
-      return;
-    }
-    uint8_t cardType = SD.cardType();
-    if(cardType == CARD_NONE) {
-      terminal.println("No SD card attached");
-      return;
-    }
-    terminal.println("Initializing SD card...");
-    if (!SD.begin(SD_CS)) {
-      terminal.println("ERROR - SD card initialization failed!");
-      return;    // init failed
-    }
-      listDir(SD, "/", 0);
-      writeFile(SD, "/data.txt", "Time, Temp, Abshum, PM2.5, 0.3U, IAQ, Pressure, CO2, Battery \r\n");
-
-
-
-    terminal.flush();
-  }
+  
 
   if (!scd30.begin()) {
     terminal.println("Failed to find SCD30 chip");
@@ -932,28 +823,13 @@ void loop() {
 
   if  (millis() - millisAvg >= 3000)  //if it's been 3 second
     {
-      if (!buttonstart){
+
         wifiAvg.push(WiFi.RSSI());
-      }
-      else {
-        leds[0] = CRGB(10, 0, 10);
-        FastLED.show();
-        logSDCard();
-        leds[0] = CRGB(0, 0, 0);
-        FastLED.show();
-      }
-      //if (buttonpressed){
-      //  leds[0] = CRGB(20, 0, 0);
-     //   FastLED.show();
-    //  }
-    //  else {
-     //   leds[0] = CRGB(0, 0, 0);
-    //    FastLED.show();       
-    //  }
+
         millisAvg = millis();
     }
 
-  if  ((millis() - millisBlynk >= blynkWait) && (!buttonstart)) //if it's been blynkWait seconds 
+  if  ((millis() - millisBlynk >= blynkWait)) //if it's been blynkWait seconds 
     {
           sht4.getEvent(&humidity, &temp);
           tempSHT = temp.temperature;
