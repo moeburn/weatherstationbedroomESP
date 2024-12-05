@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
+#include <HTTPClient.h>
+#include <Arduino_JSON.h>
 
 
 #include <BlynkSimpleEsp32.h>
@@ -53,7 +55,7 @@ Average<float> pm25aAvg(30);
 Average<float> pm10aAvg(30);
 Average<float> wifiAvg(30);
 
-
+const char* url = "http://api.weatherapi.com/v1/current.json?key=093799c32dfb409695c210114240412&q=Stratford,CA";
 
 #define every(interval) \
     static uint32_t __every__##interval = millis(); \
@@ -72,6 +74,7 @@ char auth[] = "eT_7FL7IUpqonthsAr-58uTK_-su_GYy"; //BLYNK
 char remoteAuth[] = "Eg3J3WA0zM3MA7HGJjT_P6uUh73wQ2ed"; //dude  auth
 char remoteAuth2[] = "8_-CN2rm4ki9P3i_NkPhxIbCiKd5RXhK"; //hubert clock auth
 char remoteAuth3[] = "qS5PQ8pvrbYzXdiA4I6uLEWYfeQrOcM4"; //indiana clock auth
+char remoteAuth4[] = "X_pnRUFOab29d3aNrScsKq1dryQYdTw7"; //outdoors auth
 
 const char* ssid = "mikesnet";
 const char* password = "springchicken";
@@ -83,8 +86,9 @@ unsigned int up3, up5, up10, up25, up50, up100;
 float abshumBME, tempBME, presBME, humBME, gasBME, dewpoint, humidex, tempSHT, humSHT, abshumSHT, dewpointSHT, humidexSHT;
 float tempSCD, humSCD, co2SCD, abshumSCD;
 float bmeiaq, bmeiaqAccuracy, bmestaticIaq, bmeco2Equivalent, bmebreathVocEquivalent, bmestabStatus, bmerunInStatus, bmegasPercentage;
+double inettemp, inetwind, inetwinddir, inetgust;
 int firstvalue = 1;
-int blynkWait = 30000;
+int blynkWait = 60000;
 float bridgedata, bridgetemp, bridgehum, windbridgedata, windmps, winddir;
 double windchill;
 
@@ -102,6 +106,7 @@ WidgetTerminal terminal(V14); //terminal widget
 WidgetBridge bridge1(V70);
 WidgetBridge bridge2(V60);
 WidgetBridge bridge3(V50);
+WidgetBridge bridge4(V40);
 
 
 #define STATE_SAVE_PERIOD UINT32_C(720 * 60 * 1000) /* 360 minutes - 4 times a day */
@@ -156,11 +161,40 @@ static uint8_t bsecState[BSEC_MAX_STATE_BLOB_SIZE];
 /* Gas estimate names will be according to the configuration classes used */
 const String gasName[] = { "Field Air", "Hand sanitizer", "Undefined 3", "Undefined 4"};
 
+String jsonBuffer;
+
+String httpGETRequest(const char* serverName) {
+  WiFiClient client;
+  HTTPClient http;
+    
+  // Your Domain name with URL path or IP address with path
+  http.begin(client, serverName);
+  
+  // Send HTTP POST request
+  int httpResponseCode = http.GET();
+  
+  String payload = "{}"; 
+  
+  if (httpResponseCode>0) {
+    Serial.print("HTTP Response code: ");
+    Serial.println(httpResponseCode);
+    payload = http.getString();
+  }
+  else {
+    Serial.print("Error code: ");
+    Serial.println(httpResponseCode);
+  }
+  // Free resources
+  http.end();
+
+  return payload;
+}
 
 BLYNK_CONNECTED() {
   bridge1.setAuthToken (remoteAuth);
   bridge2.setAuthToken (remoteAuth2);
   bridge3.setAuthToken (remoteAuth3);
+  bridge4.setAuthToken (remoteAuth4);
 }
 
 BLYNK_WRITE(V61){
@@ -233,7 +267,7 @@ BLYNK_WRITE(V14)
     terminal.println("erase");
     terminal.println("recal");
     terminal.println("scd");
-
+    terminal.println("weather");
     
      terminal.println("==End of list.==");
     }
@@ -247,7 +281,25 @@ BLYNK_WRITE(V14)
         terminal.println(WiFi.RSSI());
         printLocalTime();
     }
-
+        if (String("weather") == param.asStr()) 
+    {
+        jsonBuffer = httpGETRequest(url);
+        JSONVar myObject = JSON.parse(jsonBuffer);
+        if (JSON.typeof(myObject) != "undefined") {
+                     inettemp = double(myObject["current"]["temp_c"]);
+                     inetwind = double(myObject["current"]["wind_kph"]);
+                     inetwinddir = double(myObject["current"]["wind_degree"]);
+                     inetgust = double(myObject["current"]["gust_kph"]);
+        }  
+        terminal.print("Internet temp: ");
+        terminal.println(inettemp);
+        terminal.print("Internet Wind: ");
+        terminal.println(inetwind);
+        terminal.print("Internet Wind Dir: ");
+        terminal.println(inetwinddir);
+        terminal.print("Internet Wind Gust: ");
+        terminal.println(inetgust);
+    }
 
     if (String("temps") == param.asStr()) {
           sht4.getEvent(&humidity, &temp);
@@ -356,7 +408,7 @@ BLYNK_WRITE(V14)
       terminal.flush();
     }
     if (String("recal") == param.asStr()) {
-      if (!scd30.forceRecalibrationWithReference(400)){
+      if (!scd30.forceRecalibrationWithReference(420)){
         terminal.println("Failed to force recalibration with reference");
       }
       else {terminal.println("> Recalibrated CO2 sensor.");}
@@ -843,7 +895,22 @@ void loop() {
         humidex = tempBME + 0.5555 * (6.11 * pow(2.71828, 5417.7530*( (1/273.16) - (1/(273.15 + dewpoint)) ) ) - 10); //calculate humidex using Environment Canada formula
         dewpointSHT = tempSHT - ((100 - humSHT)/5); //calculate dewpoint
         humidexSHT = tempSHT + 0.5555 * (6.11 * pow(2.71828, 5417.7530*( (1/273.16) - (1/(273.15 + dewpoint)) ) ) - 10); //calculate humidex using Environment Canada formula
-        
+        jsonBuffer = httpGETRequest(url);
+        JSONVar myObject = JSON.parse(jsonBuffer);
+              if (JSON.typeof(myObject) != "undefined") {
+                     inettemp = double(myObject["current"]["temp_c"]);
+                     inetwind = double(myObject["current"]["wind_kph"]);
+                     inetwinddir = double(myObject["current"]["wind_degree"]);
+                     inetgust = double(myObject["current"]["gust_kph"]);
+        }  
+        Blynk.virtualWrite(V51, inettemp);
+        Blynk.virtualWrite(V52, inetwind);
+        Blynk.virtualWrite(V53, inetwinddir);
+        Blynk.virtualWrite(V54, inetgust);
+        bridge4.virtualWrite(V71, inettemp);
+        bridge4.virtualWrite(V72, inetwind);
+        bridge4.virtualWrite(V73, inetwinddir);
+        bridge4.virtualWrite(V74, inetgust);
         if ((tempBME <= 0) && (humBME <= 0)) {}
         else {
         Blynk.virtualWrite(V1, presBME);
@@ -868,8 +935,12 @@ void loop() {
         bridge2.virtualWrite(V75, bmeiaq);
         bridge2.virtualWrite(V76, presBME);
         bridge2.virtualWrite(V77, co2SCD);
+        bridge2.virtualWrite(V78, inetwind);
+        bridge2.virtualWrite(V79, inetgust);
         bridge3.virtualWrite(V71, pm25Avg.mean());
         bridge3.virtualWrite(V77, co2SCD);
+        bridge3.virtualWrite(V78, inetwind);
+        bridge3.virtualWrite(V79, inetgust);
         Blynk.virtualWrite(V7, pm10Avg.mean());
         Blynk.virtualWrite(V8, up3);
         Blynk.virtualWrite(V9, up5);
