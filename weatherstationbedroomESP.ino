@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <HTTPClient.h>
@@ -10,8 +11,7 @@
 //#include <PMserial.h> // Arduino library for PM sensors with serial interface
 #include <FastLED.h>
 #include <WiFiManager.h> 
-#include <ESPAsyncWebServer.h>
-#include <AsyncElegantOTA.h>
+
 #include <Average.h>
 #if defined(ARDUINO_ARCH_ESP32) || (ARDUINO_ARCH_ESP8266)
 #include <EEPROM.h>
@@ -26,10 +26,32 @@
 
 #include <Adafruit_SCD30.h>
 #include "Adafruit_SHT4x.h"
+#include <NOxGasIndexAlgorithm.h>
+#include <SensirionI2CSgp41.h>
+#include <SensirionI2cSht4x.h>
+#include <VOCGasIndexAlgorithm.h>
 
+SensirionI2cSht4x sht4x;
+SensirionI2CSgp41 sgp41;
 
-Adafruit_SHT4x sht4 = Adafruit_SHT4x();
-  sensors_event_t humidity, temp;
+VOCGasIndexAlgorithm voc_algorithm;
+NOxGasIndexAlgorithm nox_algorithm;
+
+uint16_t conditioning_s = 10;
+
+char errorMessage[256];
+    uint16_t error;
+    float humidity = 0;     // %RH
+    float temperature = 0;  // degreeC
+    uint16_t srawVoc = 0;
+    uint16_t srawNox = 0;
+    uint16_t defaultCompenstaionRh = 0x8000;  // in ticks as defined by SGP41
+    uint16_t defaultCompenstaionT = 0x6666;   // in ticks as defined by SGP41
+    uint16_t compensationRh = 0;              // in ticks as defined by SGP41
+    uint16_t compensationT = 0;               // in ticks as defined by SGP41
+        int32_t voc_index;
+        int32_t nox_index;
+
 
 Adafruit_SCD30  scd30;
 #define SCD_OFFSET 210
@@ -46,7 +68,7 @@ Plantower_PMS7003 pms7003 = Plantower_PMS7003();
 #define BUTTON_PIN 4
 #define NUM_LEDS 1
 CRGB leds[NUM_LEDS];
-AsyncWebServer server(80);
+
 Average<float> pm1Avg(30);
 Average<float> pm25Avg(30);
 Average<float> pm10Avg(30);
@@ -302,9 +324,9 @@ BLYNK_WRITE(V14)
     }
 
     if (String("temps") == param.asStr()) {
-          sht4.getEvent(&humidity, &temp);
-          tempSHT = temp.temperature;
-          humSHT = humidity.relative_humidity;
+          //sht4.getEvent(&humidity, &temp);
+         // tempSHT = temp.temperature;
+         // humSHT = humidity.relative_humidity;
         terminal.print("tempBME[v0],tempPool[v5],humidex[v31],dewpoint[v2]: ");
         terminal.print(tempBME);
         terminal.print(",,,");
@@ -649,10 +671,11 @@ void setup() {
   Serial1.begin(9600, SERIAL_8N1, 3, 1);
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
     Serial.println("");
-sht4.begin();
- 
-  sht4.setPrecision(SHT4X_HIGH_PRECISION);
-  sht4.setHeater(SHT4X_NO_HEATER);
+    Wire.begin();
+
+    sht4x.begin(Wire, SHT40_I2C_ADDR_44);
+    sgp41.begin(Wire);
+
   pms7003.init(&Serial1);
   WiFi.mode(WIFI_STA);
   WiFiManager wm;
@@ -732,19 +755,17 @@ sht4.begin();
     hours = timeinfo.tm_hour;
     mins = timeinfo.tm_min;
     secs = timeinfo.tm_sec;
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-      request->send(200, "text/plain", "Hi! I am ESP32, weatherstationbedroomESP.");
-    });
-
-    AsyncElegantOTA.begin(&server);    // Start ElegantOTA
-    server.begin();
+  ArduinoOTA.setHostname("WSBedroomESP");
+    
+    
+  ArduinoOTA.begin();
     Serial.println("HTTP server started");
-    Blynk.config(auth, IPAddress(216,110,224,105), 8080);
+    Blynk.config(auth, IPAddress(xxx,xxx,xxx,xxx), 8080);
     Blynk.connect();
   
-          sht4.getEvent(&humidity, &temp);
-          tempSHT = temp.temperature;
-          humSHT = humidity.relative_humidity;
+          //sht4.getEvent(&humidity, &temp);
+         // tempSHT = temp.temperature;
+       //   humSHT = humidity.relative_humidity;
 
 
   bsecSensor sensorList[13] = {
@@ -806,9 +827,9 @@ sht4.begin();
     terminal.println(output);
     printLocalTime(); //print current time to Blynk terminal
     terminal.println("----------------------------------");
-     terminal.println("Found SHT4x sensor");
-    terminal.print("terminal number 0x");
-     terminal.println(sht4.readSerial(), HEX);
+    // terminal.println("Found SHT4x sensor");
+    //terminal.print("terminal number 0x");
+    // terminal.println(sht4.readSerial(), HEX);
     terminal.println("Type 'help' for a list of commands");
     terminal.flush();
   
@@ -832,15 +853,117 @@ sht4.begin();
     terminal.print("Forced Recalibration reference: ");
     terminal.print(scd30.getForcedCalibrationReference());
     terminal.println(" ppm");
+
+
+    int32_t index_offset;
+    int32_t learning_time_offset_hours;
+    int32_t learning_time_gain_hours;
+    int32_t gating_max_duration_minutes;
+    int32_t std_initial;
+    int32_t gain_factor;
+    voc_algorithm.get_tuning_parameters(
+        index_offset, learning_time_offset_hours, learning_time_gain_hours,
+        gating_max_duration_minutes, std_initial, gain_factor);
+
+    terminal.println("\nVOC Gas Index Algorithm parameters");
+    terminal.print("Index offset:\t");
+    terminal.println(index_offset);
+    terminal.print("Learning time offset hours:\t");
+    terminal.println(learning_time_offset_hours);
+    terminal.print("Learning time gain hours:\t");
+    terminal.println(learning_time_gain_hours);
+    terminal.print("Gating max duration minutes:\t");
+    terminal.println(gating_max_duration_minutes);
+    terminal.print("Std inital:\t");
+    terminal.println(std_initial);
+    terminal.print("Gain factor:\t");
+    terminal.println(gain_factor);
+
+    nox_algorithm.get_tuning_parameters(
+        index_offset, learning_time_offset_hours, learning_time_gain_hours,
+        gating_max_duration_minutes, std_initial, gain_factor);
+
+    terminal.println("\nNOx Gas Index Algorithm parameters");
+    terminal.print("Index offset:\t");
+    terminal.println(index_offset);
+    terminal.print("Learning time offset hours:\t");
+    terminal.println(learning_time_offset_hours);
+    terminal.print("Gating max duration minutes:\t");
+    terminal.println(gating_max_duration_minutes);
+    terminal.print("Gain factor:\t");
+    terminal.println(gain_factor);
+    terminal.println("");
+    
     terminal.flush();
+    sht4x.measureHighPrecision(temperature, humidity);
+            tempSHT = temperature;
+        humSHT = humidity;
+        compensationT = static_cast<uint16_t>((tempSHT + 45) * 65535 / 175);
+        compensationRh = static_cast<uint16_t>(humSHT * 65535 / 100);
   }
 }
 
 void loop() {
+
+
+
   if (digitalRead(BUTTON_PIN) == HIGH){ //button is normally closed, pressed open
     every(100){
       buttonpressed = !buttonpressed;
     }
+  }
+
+  every(1000){
+
+    // 3. Measure SGP4x signals
+    if (conditioning_s > 0) {
+        // During NOx conditioning (10s) SRAW NOx will remain 0
+        error =
+            sgp41.executeConditioning(compensationRh, compensationT, srawVoc);
+        conditioning_s--;
+    } else {
+        error = sgp41.measureRawSignals(compensationRh, compensationT, srawVoc,
+                                        srawNox);
+    }
+
+    // 4. Process raw signals by Gas Index Algorithm to get the VOC and NOx
+    // index
+    //    values
+    if (error) {
+        terminal.print("SGP41 - Error trying to execute measureRawSignals(): ");
+        errorToString(error, errorMessage, 256);
+        terminal.println(errorMessage);
+        terminal.flush();
+    } else {
+         voc_index = voc_algorithm.process(srawVoc);
+         nox_index = nox_algorithm.process(srawNox);
+    }
+  }
+
+  every (15000){
+         error = sht4x.measureHighPrecision(temperature, humidity);
+    if (error) {
+        terminal.print(
+            "SHT4x - Error trying to execute measureHighPrecision(): ");
+        errorToString(error, errorMessage, 256);
+        terminal.println(errorMessage);
+        terminal.println("Fallback to use default values for humidity and "
+                       "temperature compensation for SGP41");
+        compensationRh = defaultCompenstaionRh;
+        compensationT = defaultCompenstaionT;
+        terminal.flush();
+    } else {
+        tempSHT = temperature;
+        humSHT = humidity;
+        // convert temperature and humidity to ticks as defined by SGP41
+        // interface
+        // NOTE: in case you read RH and T raw signals check out the
+        // ticks specification in the datasheet, as they can be different for
+        // different sensors
+        compensationT = static_cast<uint16_t>((tempSHT + 45) * 65535 / 175);
+        compensationRh = static_cast<uint16_t>(humSHT * 65535 / 100);
+    }
+
   }
 
   if (scd30.dataReady()) {
@@ -883,9 +1006,9 @@ void loop() {
 
   if  ((millis() - millisBlynk >= blynkWait)) //if it's been blynkWait seconds 
     {
-          sht4.getEvent(&humidity, &temp);
-          tempSHT = temp.temperature;
-          humSHT = humidity.relative_humidity;
+          //sht4.getEvent(&humidity, &temp);
+         // tempSHT = temp.temperature;
+        //  humSHT = humidity.relative_humidity;
         batteryVolts = analogReadMilliVolts(ADC_PIN) / 500.0;
         millisBlynk = millis();
         abshumBME = (6.112 * pow(2.71828, ((17.67 * tempBME)/(tempBME + 243.5))) * humBME * 2.1674)/(273.15 + tempBME);
@@ -974,5 +1097,10 @@ void loop() {
         Blynk.virtualWrite(V45, co2SCD);
         Blynk.virtualWrite(V46, abshumSCD);
         Blynk.virtualWrite(V47, batteryVolts);
+        Blynk.virtualWrite(V71, srawVoc);
+        Blynk.virtualWrite(V72, srawNox);
+        Blynk.virtualWrite(V73, voc_index);
+        Blynk.virtualWrite(V74, nox_index);
     }
+     ArduinoOTA.handle();
 }
