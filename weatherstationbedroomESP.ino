@@ -1,3 +1,5 @@
+//ESP board core package 2.0.17
+
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
