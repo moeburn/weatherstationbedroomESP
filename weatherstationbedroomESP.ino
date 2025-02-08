@@ -1,5 +1,3 @@
-//ESP board core package 2.0.17
-
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
@@ -25,14 +23,31 @@
 #include <nvs_flash.h>
 //#include "SD.h"
 //#include <SPI.h>
-
+#include "esp32/rom/rtc.h"
 #include <Adafruit_SCD30.h>
 #include "Adafruit_SHT4x.h"
 #include <NOxGasIndexAlgorithm.h>
 #include <SensirionI2CSgp41.h>
 #include <SensirionI2cSht4x.h>
 #include <VOCGasIndexAlgorithm.h>
+#include <ze08_ch2o.h>
+#include <SoftwareSerial.h>
+#include "MyLD2410.h"
+#define RX2 12
+#define TX2 13
+#define LED_PIN 15  
+#define ADC_PIN 35
+#define BUTTON_PIN 4
+#define NUM_LEDS 1
+#include<ADS1115_WE.h> 
+#include<Wire.h>
+#define I2C_ADDRESS 0x48
+ADS1115_WE adc = ADS1115_WE(I2C_ADDRESS);
 
+SoftwareSerial MySerial1(RX2, TX2);
+MyLD2410 sensor(Serial2);
+Ze08CH2O ch2o{&MySerial1};
+float lastReading = 0;
 SensirionI2cSht4x sht4x;
 SensirionI2CSgp41 sgp41;
 
@@ -40,6 +55,10 @@ VOCGasIndexAlgorithm voc_algorithm;
 NOxGasIndexAlgorithm nox_algorithm;
 
 uint16_t conditioning_s = 10;
+int sensorcount;
+long stasignal, movingsignal, stadistance, movingdistance, anydistance;
+float stasigavg, movsigavg, stadisavg, movdisavg, anydisavg;
+int ldrread;
 
 char errorMessage[256];
     uint16_t error;
@@ -65,10 +84,7 @@ Adafruit_SCD30  scd30;
 char output[256];
 Plantower_PMS7003 pms7003 = Plantower_PMS7003();
 
-#define LED_PIN 15  
-#define ADC_PIN 35
-#define BUTTON_PIN 4
-#define NUM_LEDS 1
+
 CRGB leds[NUM_LEDS];
 
 Average<float> pm1Avg(30);
@@ -112,7 +128,7 @@ float tempSCD, humSCD, co2SCD, abshumSCD;
 float bmeiaq, bmeiaqAccuracy, bmestaticIaq, bmeco2Equivalent, bmebreathVocEquivalent, bmestabStatus, bmerunInStatus, bmegasPercentage;
 double inettemp, inetwind, inetwinddir, inetgust;
 int firstvalue = 1;
-int blynkWait = 60000;
+int blynkWait = 30000;
 float bridgedata, bridgetemp, bridgehum, windbridgedata, windmps, winddir;
 double windchill;
 
@@ -126,6 +142,7 @@ int menuValue = 2;
 float  pmR, pmG, pmB;
 bool rgbON = true;
 
+
 WidgetTerminal terminal(V14); //terminal widget
 WidgetBridge bridge1(V70);
 WidgetBridge bridge2(V60);
@@ -137,7 +154,39 @@ WidgetBridge bridge4(V40);
 #define PANIC_LED 2
 #define ERROR_DUR 250
 
+float readChannel(ADS1115_MUX channel) {
+  float voltage = 0.0;
+  adc.setCompareChannels(channel);
+  adc.startSingleMeasurement();
+  while(adc.isBusy()){delay(0);}
+  voltage = adc.getRawResult(); // alternative: getResult_mV for Millivolt
+  return voltage;
+}
 
+
+
+void verbose_print_reset_reason(int reason)
+{
+  switch ( reason)
+  {
+    case 1  : terminal.println ("Vbat power on reset");break;
+    case 3  : terminal.println ("Software reset digital core");break;
+    case 4  : terminal.println ("Legacy watch dog reset digital core");break;
+    case 5  : terminal.println ("Deep Sleep reset digital core");break;
+    case 6  : terminal.println ("Reset by SLC module, reset digital core");break;
+    case 7  : terminal.println ("Timer Group0 Watch dog reset digital core");break;
+    case 8  : terminal.println ("Timer Group1 Watch dog reset digital core");break;
+    case 9  : terminal.println ("RTC Watch dog Reset digital core");break;
+    case 10 : terminal.println ("Instrusion tested to reset CPU");break;
+    case 11 : terminal.println ("Time Group reset CPU");break;
+    case 12 : terminal.println ("Software reset CPU");break;
+    case 13 : terminal.println ("RTC Watch dog Reset CPU");break;
+    case 14 : terminal.println ("for APP CPU, reseted by PRO CPU");break;
+    case 15 : terminal.println ("Reset when the vdd voltage is not stable");break;
+    case 16 : terminal.println ("RTC Watch dog reset digital core and rtc module");break;
+    default : terminal.println ("NO_MEAN");
+  }
+}
 
 /* Helper functions declarations */
 /**
@@ -252,6 +301,10 @@ BLYNK_WRITE(V16)
 }
 
 
+void printValue(const byte &val) {
+  terminal.print(' ');
+  terminal.print(val);
+}
 
 
 
@@ -260,7 +313,73 @@ BLYNK_WRITE(V16)
     redboost = param.asInt();
 }*/
 
+void printData() {
+  sensorcount++;
+  if (sensor.presenceDetected()) {
+    anydistance += sensor.detectedDistance();
+  }
+  if (sensor.movingTargetDetected()) {
+    movingsignal += sensor.movingTargetSignal();
+    movingdistance += sensor.movingTargetDistance();
+  }
+  if (sensor.stationaryTargetDetected()) {
+    stasignal += sensor.stationaryTargetSignal();
+    stadistance += sensor.stationaryTargetDistance();
+  }
+}
 
+void termData() {
+  //sensorcount++;
+  terminal.print(sensor.statusString());
+  if (sensor.presenceDetected()) {
+    terminal.print(", distance: ");
+    terminal.print(sensor.detectedDistance());
+    //anydistance += sensor.detectedDistance();
+    terminal.print("cm");
+  }
+  terminal.println();
+  if (sensor.movingTargetDetected()) {
+    terminal.print(" MOVING    = ");
+    //movingsignal += sensor.movingTargetSignal();
+    terminal.print(sensor.movingTargetSignal());
+    terminal.print("@");
+    //movingdistance += sensor.movingTargetDistance();
+    terminal.print(sensor.movingTargetDistance());
+    terminal.print("cm ");
+    if (sensor.inEnhancedMode()) {
+      terminal.print("\n signals->[");
+      sensor.getMovingSignals().forEach(printValue);
+      terminal.print(" ] thresholds:[");
+      sensor.getMovingThresholds().forEach(printValue);
+      terminal.print(" ]");
+    }
+    terminal.println();
+  }
+  if (sensor.stationaryTargetDetected()) {
+    terminal.print(" STATIONARY= ");
+    //stasignal += sensor.stationaryTargetSignal();
+    terminal.print(sensor.stationaryTargetSignal());
+    terminal.print("@");
+    //stadistance += sensor.stationaryTargetDistance();
+    terminal.print(sensor.stationaryTargetDistance());
+    terminal.print("cm ");
+    if (sensor.inEnhancedMode()) {
+      terminal.print("\n signals->[");
+      sensor.getStationarySignals().forEach(printValue);
+      terminal.print(" ] thresholds:[");
+      sensor.getStationaryThresholds().forEach(printValue);
+      terminal.print(" ]");
+    }
+    terminal.println();
+  }
+  byte lightLevel = sensor.getLightLevel();
+  if (lightLevel) {
+    terminal.print("Light level: ");
+    terminal.println(lightLevel);
+  }
+  terminal.println();
+  terminal.flush();
+}
 
 
 void printLocalTime()
@@ -292,6 +411,7 @@ BLYNK_WRITE(V14)
     terminal.println("recal");
     terminal.println("scd");
     terminal.println("weather");
+    terminal.println("ld");
     
      terminal.println("==End of list.==");
     }
@@ -457,6 +577,15 @@ BLYNK_WRITE(V14)
       terminal.println(" ppm");
       terminal.flush();
     }
+
+
+  if (String("ld") == param.asStr()) {
+  terminal.print("Max range CH20: ");
+  terminal.println(ch2o.getFullRange());
+  terminal.print("Last CH20 reading: ");
+  terminal.println(lastReading);
+      termData();
+  }
 terminal.flush();
 }
 
@@ -648,7 +777,7 @@ void readPMS() {
 }
 
 void setup() {
-  setCpuFrequencyMhz(80);
+  setCpuFrequencyMhz(160);
   pinMode(BUTTON_PIN, INPUT_PULLUP); //BUTTON PIN
   delay(2);
   if (digitalRead(BUTTON_PIN) == HIGH){ buttonstart = true;}
@@ -671,6 +800,8 @@ void setup() {
 
   Serial.begin(9600);
   Serial1.begin(9600, SERIAL_8N1, 3, 1);
+  MySerial1.begin(9600);
+  Serial2.begin(LD2410_BAUD_RATE);
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
     Serial.println("");
     Wire.begin();
@@ -762,7 +893,7 @@ void setup() {
     
   ArduinoOTA.begin();
     Serial.println("HTTP server started");
-    Blynk.config(auth, IPAddress(xxx,xxx,xxx,xxx), 8080);
+      Blynk.config(auth, IPAddress(216, 110, 224, 105), 8080);
     Blynk.connect();
   
           //sht4.getEvent(&humidity, &temp);
@@ -896,24 +1027,34 @@ void setup() {
     terminal.println(gain_factor);
     terminal.println("");
     
-    terminal.flush();
+    
     sht4x.measureHighPrecision(temperature, humidity);
             tempSHT = temperature;
         humSHT = humidity;
         compensationT = static_cast<uint16_t>((tempSHT + 45) * 65535 / 175);
         compensationRh = static_cast<uint16_t>(humSHT * 65535 / 100);
   }
+    if (!sensor.begin()) {
+        terminal.println("Failed to communicate with LD2410 sensor.");
+    } 
+    else {
+      terminal.println("Connected to LD2410 sensor! :)");
+    }
+  verbose_print_reset_reason(rtc_get_reset_reason(0));
+  verbose_print_reset_reason(rtc_get_reset_reason(1));
+  if(!adc.init()){
+    terminal.println("ADS1115 not connected!");
+  }
+  adc.setVoltageRange_mV(ADS1115_RANGE_2048);
+    terminal.flush();
 }
 
 void loop() {
 
 
 
-  if (digitalRead(BUTTON_PIN) == HIGH){ //button is normally closed, pressed open
-    every(100){
-      buttonpressed = !buttonpressed;
-    }
-  }
+
+
 
   every(1000){
 
@@ -940,6 +1081,16 @@ void loop() {
          voc_index = voc_algorithm.process(srawVoc);
          nox_index = nox_algorithm.process(srawNox);
     }
+  }
+
+  every(2000){
+              if (sensor.check() == MyLD2410::Response::DATA) {
+            printData();
+          }
+          else {
+            terminal.println("Failed to communicate with LD2410 sensor.");
+            terminal.flush();
+          }
   }
 
   every (15000){
@@ -987,11 +1138,11 @@ void loop() {
    }
   }
 
-
-
   if (!envSensor.run()) {
       checkBsecStatus (envSensor);
   }
+
+
 
   pms7003.updateFrame();
   readPMS();
@@ -1008,15 +1159,20 @@ void loop() {
 
   if  ((millis() - millisBlynk >= blynkWait)) //if it's been blynkWait seconds 
     {
-          //sht4.getEvent(&humidity, &temp);
-         // tempSHT = temp.temperature;
-        //  humSHT = humidity.relative_humidity;
+        adc.setCompareChannels(ADS1115_COMP_0_GND);
+        adc.startSingleMeasurement();
+        Ze08CH2O::concentration_t reading;
+        if (ch2o.read(reading)) {
+          Serial.print("New CH20 value: ");
+          Serial.println(reading);
+          lastReading = reading;
+        }
         batteryVolts = analogReadMilliVolts(ADC_PIN) / 500.0;
         millisBlynk = millis();
         abshumBME = (6.112 * pow(2.71828, ((17.67 * tempBME)/(tempBME + 243.5))) * humBME * 2.1674)/(273.15 + tempBME);
         abshumSHT = (6.112 * pow(2.71828, ((17.67 * tempSHT)/(tempSHT + 243.5))) * humSHT * 2.1674)/(273.15 + tempSHT);
         abshumSCD = (6.112 * pow(2.71828, ((17.67 * tempSCD)/(tempSCD + 243.5))) * humSCD * 2.1674)/(273.15 + tempSCD);
-        dewpoint = tempBME - ((100 - humBME)/5); //calculate dewpoint
+        dewpoint = tempSHT - ((100 - humSHT)/5); //calculate dewpoint
         humidex = tempBME + 0.5555 * (6.11 * pow(2.71828, 5417.7530*( (1/273.16) - (1/(273.15 + dewpoint)) ) ) - 10); //calculate humidex using Environment Canada formula
         dewpointSHT = tempSHT - ((100 - humSHT)/5); //calculate dewpoint
         humidexSHT = tempSHT + 0.5555 * (6.11 * pow(2.71828, 5417.7530*( (1/273.16) - (1/(273.15 + dewpoint)) ) ) - 10); //calculate humidex using Environment Canada formula
@@ -1057,7 +1213,7 @@ void loop() {
         bridge2.virtualWrite(V72, tempSHT);
         bridge2.virtualWrite(V73, humSHT);
         bridge2.virtualWrite(V74, abshumSHT);
-        bridge2.virtualWrite(V75, bmeiaq);
+        bridge2.virtualWrite(V75, voc_index);
         bridge2.virtualWrite(V76, presBME);
         bridge2.virtualWrite(V77, co2SCD);
         bridge2.virtualWrite(V78, inetwind);
@@ -1103,6 +1259,31 @@ void loop() {
         Blynk.virtualWrite(V72, srawNox);
         Blynk.virtualWrite(V73, voc_index);
         Blynk.virtualWrite(V74, nox_index);
+
+        movsigavg = movingsignal / sensorcount;
+        movdisavg = movingdistance / sensorcount;
+        stasigavg = stasignal / sensorcount;
+        stadisavg = stadistance / sensorcount;
+        anydisavg = anydistance / sensorcount;
+        Blynk.virtualWrite(V81, movsigavg);
+        Blynk.virtualWrite(V82, movdisavg);
+        Blynk.virtualWrite(V83, stasigavg);
+        Blynk.virtualWrite(V84, stadisavg);
+        Blynk.virtualWrite(V85, sensorcount);
+        Blynk.virtualWrite(V86, lastReading);
+        Blynk.virtualWrite(V87, anydisavg);
+        while(adc.isBusy()){delay(0);}
+        ldrread = adc.getRawResult(); // alternative: getResult_mV for Millivolt
+        Blynk.virtualWrite(V88, ldrread);
+        movingsignal = 0;
+        movingdistance = 0;
+        stasignal = 0;
+        anydistance = 0;
+        stadistance = 0;
+        sensorcount = 0;
+
+        
     }
      ArduinoOTA.handle();
+    // delay(1);
 }
