@@ -93,7 +93,8 @@ Average<float> pm10Avg(30);
 Average<float> pm1aAvg(30);
 Average<float> pm25aAvg(30);
 Average<float> pm10aAvg(30);
-Average<float> wifiAvg(30);
+Average<float> wifiAvg(20);
+Average<float> lightAvg(20);
 
 const char* url = "http://api.weatherapi.com/v1/current.json?key=093799c32dfb409695c210114240412&q=Stratford,CA";
 
@@ -777,7 +778,7 @@ void readPMS() {
 }
 
 void setup() {
-  setCpuFrequencyMhz(160);
+  //setCpuFrequencyMhz(160);
   pinMode(BUTTON_PIN, INPUT_PULLUP); //BUTTON PIN
   delay(2);
   if (digitalRead(BUTTON_PIN) == HIGH){ buttonstart = true;}
@@ -811,7 +812,7 @@ void setup() {
 
   pms7003.init(&Serial1);
   WiFi.mode(WIFI_STA);
-  WiFiManager wm;
+  /*WiFiManager wm;
 
   if ((buttonstart) || !wm.getWiFiIsSaved()){
     nvs_flash_erase(); // erase the NVS partition and...
@@ -864,8 +865,8 @@ void setup() {
         FastLED.show();
     }
   }
-  else {
-    WiFi.begin(wm.getWiFiSSID(), wm.getWiFiPass());
+  else {*/
+    WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
       leds[0] = CRGB(100, 100, 0);
       FastLED.show();
@@ -876,7 +877,7 @@ void setup() {
       Serial.print(".");
     }
 
-  }
+ // }
 
 
 
@@ -1091,6 +1092,24 @@ void loop() {
             terminal.println("Failed to communicate with LD2410 sensor.");
             terminal.flush();
           }
+    if (scd30.dataReady()) {
+          if (!scd30.read()){ 
+        terminal.println("Error reading CO2 sensor data"); 
+        return; 
+      }
+      tempSCD = scd30.temperature;
+      humSCD = scd30.relative_humidity;
+      co2SCD = scd30.CO2;
+    }
+  if (!envSensor.run()) {
+      checkBsecStatus (envSensor);
+  }
+
+
+
+  pms7003.updateFrame();
+  readPMS();
+
   }
 
   every (15000){
@@ -1119,15 +1138,6 @@ void loop() {
 
   }
 
-  if (scd30.dataReady()) {
-        if (!scd30.read()){ 
-      terminal.println("Error reading CO2 sensor data"); 
-      return; 
-    }
-    tempSCD = scd30.temperature;
-    humSCD = scd30.relative_humidity;
-    co2SCD = scd30.CO2;
-  }
 
   every (120000)
   {
@@ -1138,20 +1148,14 @@ void loop() {
    }
   }
 
-  if (!envSensor.run()) {
-      checkBsecStatus (envSensor);
-  }
 
-
-
-  pms7003.updateFrame();
-  readPMS();
 
   if (WiFi.status() == WL_CONNECTED) {Blynk.run();} 
 
   if  (millis() - millisAvg >= 3000)  //if it's been 3 second
     {
-
+        ldrread = readChannel(ADS1115_COMP_0_GND);
+        lightAvg.push(ldrread);
         wifiAvg.push(WiFi.RSSI());
 
         millisAvg = millis();
@@ -1159,8 +1163,8 @@ void loop() {
 
   if  ((millis() - millisBlynk >= blynkWait)) //if it's been blynkWait seconds 
     {
-        adc.setCompareChannels(ADS1115_COMP_0_GND);
-        adc.startSingleMeasurement();
+        //adc.setCompareChannels(ADS1115_COMP_0_GND );
+        //adc.startSingleMeasurement();
         Ze08CH2O::concentration_t reading;
         if (ch2o.read(reading)) {
           Serial.print("New CH20 value: ");
@@ -1218,6 +1222,7 @@ void loop() {
         bridge2.virtualWrite(V77, co2SCD);
         bridge2.virtualWrite(V78, inetwind);
         bridge2.virtualWrite(V79, inetgust);
+        bridge2.virtualWrite(V83, lightAvg.mean());
         bridge3.virtualWrite(V71, pm25Avg.mean());
         bridge3.virtualWrite(V77, co2SCD);
         bridge3.virtualWrite(V78, inetwind);
@@ -1272,9 +1277,9 @@ void loop() {
         Blynk.virtualWrite(V85, sensorcount);
         Blynk.virtualWrite(V86, lastReading);
         Blynk.virtualWrite(V87, anydisavg);
-        while(adc.isBusy()){delay(0);}
-        ldrread = adc.getRawResult(); // alternative: getResult_mV for Millivolt
-        Blynk.virtualWrite(V88, ldrread);
+        //while(adc.isBusy()){delay(0);}
+        //ldrread = adc.getRawResult(); // alternative: getResult_mV for Millivolt
+        Blynk.virtualWrite(V88, lightAvg.mean());
         movingsignal = 0;
         movingdistance = 0;
         stasignal = 0;
