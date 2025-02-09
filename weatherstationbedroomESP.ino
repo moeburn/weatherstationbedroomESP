@@ -1054,6 +1054,9 @@ void loop() {
 
 
 
+  if (!envSensor.run()) {
+      checkBsecStatus (envSensor);
+  }
 
 
 
@@ -1101,9 +1104,6 @@ void loop() {
       humSCD = scd30.relative_humidity;
       co2SCD = scd30.CO2;
     }
-  if (!envSensor.run()) {
-      checkBsecStatus (envSensor);
-  }
 
 
 
