@@ -17,8 +17,8 @@
 #include <EEPROM.h>
 #define USE_EEPROM
 #endif
-#include <bsec2.h>
-#include "config/bme680_iaq_33v_3s_28d/bsec_iaq.h"
+//#include <bsec2.h>
+//#include "config/bme680_iaq_33v_3s_28d/bsec_iaq.h"
 //#include "FS.h"
 #include <nvs_flash.h>
 //#include "SD.h"
@@ -130,7 +130,7 @@ float bmeiaq, bmeiaqAccuracy, bmestaticIaq, bmeco2Equivalent, bmebreathVocEquiva
 double inettemp, inetwind, inetwinddir, inetgust;
 int firstvalue = 1;
 int blynkWait = 30000;
-float bridgedata, bridgetemp, bridgehum, windbridgedata, windmps, winddir;
+float bridgedata, bridgetemp, bridgehum, windbridgedata, windmps, winddir, bridgepres;
 double windchill;
 
 unsigned long lastmillis = 0;
@@ -189,42 +189,22 @@ void verbose_print_reset_reason(int reason)
   }
 }
 
-/* Helper functions declarations */
-/**
- * @brief : This function toggles the led continuously with one second delay
- */
+/* 
 void errLeds(void);
 
-/**
- * @brief : This function checks the BSEC status, prints the respective error code. Halts in case of error
- * @param[in] bsec  : Bsec2 class object
- */
+
 void checkBsecStatus(Bsec2 bsec);
 
-/**
- * @brief : This function updates/saves BSEC state
- * @param[in] bsec  : Bsec2 class object
- */
+
 void updateBsecState(Bsec2 bsec);
 
-/**
- * @brief : This function is called by the BSEC library when a new output is available
- * @param[in] input     : BME68X sensor data before processing
- * @param[in] outputs   : Processed BSEC BSEC output data
- * @param[in] bsec      : Instance of BSEC2 calling the callback
- */
+
 void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bsec);
 
-/**
- * @brief : This function retrieves the existing state
- * @param : Bsec2 class object
- */
+
 bool loadState(Bsec2 bsec);
 
-/**
- * @brief : This function writes the state into EEPROM
- * @param : Bsec2 class object
- */
+
 bool saveState(Bsec2 bsec);
 
 
@@ -232,8 +212,8 @@ Bsec2 envSensor;
 #ifdef USE_EEPROM
 static uint8_t bsecState[BSEC_MAX_STATE_BLOB_SIZE];
 #endif
-/* Gas estimate names will be according to the configuration classes used */
-const String gasName[] = { "Field Air", "Hand sanitizer", "Undefined 3", "Undefined 4"};
+
+const String gasName[] = { "Field Air", "Hand sanitizer", "Undefined 3", "Undefined 4"}; */
 
 String jsonBuffer;
 
@@ -543,7 +523,7 @@ BLYNK_WRITE(V14)
       terminal.print("> Heater is now: ");
       terminal.print(heater);
     }
-    if (String("erase") == param.asStr()) {
+    /*if (String("erase") == param.asStr()) {
       terminal.println("Erasing EEPROM");
 
       for (uint8_t i = 0; i <= BSEC_MAX_STATE_BLOB_SIZE; i++)
@@ -551,7 +531,7 @@ BLYNK_WRITE(V14)
 
       EEPROM.commit();
       terminal.flush();
-    }
+    }*/
     if (String("recal") == param.asStr()) {
       if (!scd30.forceRecalibrationWithReference(420)){
         terminal.println("Failed to force recalibration with reference");
@@ -590,6 +570,10 @@ BLYNK_WRITE(V14)
 terminal.flush();
 }
 
+BLYNK_WRITE(V80) {
+  bridgepres = param.asFloat();
+}
+
 void errLeds(void)
 {
     //while(1)
@@ -603,14 +587,14 @@ void errLeds(void)
     //}
 }
 
-void updateBsecState(Bsec2 bsec)
+/*void updateBsecState(Bsec2 bsec)
 {
     static uint16_t stateUpdateCounter = 0;
     bool update = false;
 
     if (!stateUpdateCounter || (stateUpdateCounter * STATE_SAVE_PERIOD) < millis())
     {
-        /* Update every STATE_SAVE_PERIOD minutes */
+
         update = true;
         stateUpdateCounter++;
     }
@@ -671,14 +655,14 @@ void newDataCallback(const bme68xData data, const bsecOutputs outputs, Bsec2 bse
     }
 
     updateBsecState(envSensor);
-}
+} 
 
 void checkBsecStatus(Bsec2 bsec)
 {
     if (bsec.status < BSEC_OK)
     {
         Serial.println("BSEC error code : " + String(bsec.status));
-        errLeds(); /* Halt in case of failure */
+
     } else if (bsec.status > BSEC_OK)
     {
         Serial.println("BSEC warning code : " + String(bsec.status));
@@ -687,7 +671,7 @@ void checkBsecStatus(Bsec2 bsec)
     if (bsec.sensor.status < BME68X_OK)
     {
         Serial.println("BME68X error code : " + String(bsec.sensor.status));
-        errLeds(); /* Halt in case of failure */
+
     } else if (bsec.sensor.status > BME68X_OK)
     {
         Serial.println("BME68X warning code : " + String(bsec.sensor.status));
@@ -701,7 +685,7 @@ bool loadState(Bsec2 bsec)
 
     if (EEPROM.read(0) == BSEC_MAX_STATE_BLOB_SIZE)
     {
-        /* Existing state in EEPROM */
+
         terminal.println("Reading state from EEPROM");
         terminal.print("State file: ");
         for (uint8_t i = 0; i < BSEC_MAX_STATE_BLOB_SIZE; i++)
@@ -715,7 +699,7 @@ bool loadState(Bsec2 bsec)
             return false;
     } else
     {
-        /* Erase the EEPROM with zeroes */
+
         terminal.println("Erasing EEPROM");
 
         for (uint8_t i = 0; i <= BSEC_MAX_STATE_BLOB_SIZE; i++)
@@ -749,7 +733,7 @@ bool saveState(Bsec2 bsec)
     EEPROM.commit();
 #endif
     return true;
-}
+}*/
 
 void readPMS() {
     if (pms7003.hasNewData()) {
@@ -902,7 +886,7 @@ void setup() {
        //   humSHT = humidity.relative_humidity;
 
 
-  bsecSensor sensorList[13] = {
+  /*bsecSensor sensorList[13] = {
   BSEC_OUTPUT_IAQ,
   BSEC_OUTPUT_STATIC_IAQ,
   BSEC_OUTPUT_CO2_EQUIVALENT,
@@ -920,42 +904,40 @@ void setup() {
 
   #ifdef USE_EEPROM
    EEPROM.begin(BSEC_MAX_STATE_BLOB_SIZE + 1);
-  #endif
-  Wire.begin();
+  #endif*/
+
   //pinMode(PANIC_LED, OUTPUT);
 
-  /* Valid for boards with USB-COM. Wait until the port is open */
-  while (!Serial) delay(10);
-  
-  /* Initialize the library and interfaces */
+
+/*
   if (!envSensor.begin(BME68X_I2C_ADDR_LOW, Wire))
   {
       checkBsecStatus(envSensor);
   }
 
-  /* Load the configuration string that stores information on how to classify the detected gas */
+
   if (!envSensor.setConfig(bsec_config_iaq))
   {
       checkBsecStatus (envSensor);
   }
 
-  /* Copy state from the EEPROM to the algorithm */
+
   if (!loadState(envSensor))
   {
       checkBsecStatus (envSensor);
   }
 
-  /* Subscribe for the desired BSEC2 outputs */
+
   if (!envSensor.updateSubscription(sensorList, 13, BSEC_SAMPLE_RATE_LP))
   {
       checkBsecStatus (envSensor);
   }
 
-  /* Whenever new data is available call the newDataCallback function */
+
   envSensor.setTemperatureOffset(5.0);
   envSensor.attachCallback(newDataCallback);
 
-  String output = "\nBSEC library version " + String(envSensor.version.major) + "." + String(envSensor.version.minor) + "." + String(envSensor.version.major_bugfix) + "." + String(envSensor.version.minor_bugfix);
+  String output = "\nBSEC library version " + String(envSensor.version.major) + "." + String(envSensor.version.minor) + "." + String(envSensor.version.major_bugfix) + "." + String(envSensor.version.minor_bugfix);*/
     terminal.println("----------------------------------");
     terminal.println("STARTING BEDROOM BLYNK SERVER v2.2");
     terminal.println(output);
@@ -1054,9 +1036,9 @@ void loop() {
 
 
 
-  if (!envSensor.run()) {
+  /*if (!envSensor.run()) {
       checkBsecStatus (envSensor);
-  }
+  }*/
 
 
 
@@ -1141,11 +1123,12 @@ void loop() {
 
   every (120000)
   {
-       if (!scd30.startContinuousMeasurement(int(presBME))){
-     terminal.println("Failed to set ambient pressure offset");
-     terminal.flush();
-
-   }
+    if (bridgepres != 0) {
+          if (!scd30.startContinuousMeasurement(int(bridgepres))){
+        terminal.println("Failed to set ambient pressure offset");
+        terminal.flush();
+      }
+    }
   }
 
 
@@ -1237,16 +1220,16 @@ void loop() {
         Blynk.virtualWrite(V17, pm1aAvg.mean());
         Blynk.virtualWrite(V18, pm25aAvg.mean());
         Blynk.virtualWrite(V19, pm10aAvg.mean());
-        Blynk.virtualWrite(V23, bmeiaq);
+        /*Blynk.virtualWrite(V23, bmeiaq);
         Blynk.virtualWrite(V24, bmeiaqAccuracy);
         Blynk.virtualWrite(V25, bmestaticIaq);
         Blynk.virtualWrite(V26, bmeco2Equivalent);
         Blynk.virtualWrite(V27, bmebreathVocEquivalent);
         Blynk.virtualWrite(V28, bmestabStatus);
         Blynk.virtualWrite(V29, bmerunInStatus);
-        Blynk.virtualWrite(V30, bmegasPercentage);
+        Blynk.virtualWrite(V30, bmegasPercentage);*/
 
-        Blynk.virtualWrite(V33, gasBME);
+        //Blynk.virtualWrite(V33, gasBME);
         Blynk.virtualWrite(V34, wifiAvg.mean());
         //if (!buttonpressed){
         Blynk.virtualWrite(V36, tempSHT);
